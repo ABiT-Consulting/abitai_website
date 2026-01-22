@@ -1,4 +1,0 @@
-[11-Nov-2025 10:20:24 UTC] PHP Fatal error:  Uncaught Error: Class "WP_Widget" not found in /home1/abitcons/abit.ai/wp-includes/widgets/class-wp-widget-block.php:17
-Stack trace:
-#0 {main}
-  thrown in /home1/abitcons/abit.ai/wp-includes/widgets/class-wp-widget-block.php on line 17
