@@ -1,0 +1,13 @@
+# WordPress sensitive and generated files
+wp-config.php
+*.sql
+error_log
+
+# Uploads/cache (generated on server)
+wp-content/uploads/
+wp-content/cache/
+wp-content/upgrade/
+
+# OS / editor
+.DS_Store
+Thumbs.db
