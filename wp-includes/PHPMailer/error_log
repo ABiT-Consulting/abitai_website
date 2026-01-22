@@ -1,0 +1,4 @@
+[04-Jan-2026 11:32:16 UTC] PHP Fatal error:  Uncaught Error: Interface "PHPMailer\PHPMailer\OAuthTokenProvider" not found in /home1/abitcons/abit.ai/wp-includes/PHPMailer/OAuth.php:36
+Stack trace:
+#0 {main}
+  thrown in /home1/abitcons/abit.ai/wp-includes/PHPMailer/OAuth.php on line 36

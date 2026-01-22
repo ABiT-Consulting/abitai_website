@@ -1,0 +1,12 @@
+[19-Sep-2025 03:58:21 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function add_action() in /home1/abitcons/abit.ai/wp-content/themes/twentytwentyfour/functions.php:147
+Stack trace:
+#0 {main}
+  thrown in /home1/abitcons/abit.ai/wp-content/themes/twentytwentyfour/functions.php on line 147
+[29-Sep-2025 13:05:44 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function add_action() in /home1/abitcons/abit.ai/wp-content/themes/twentytwentyfour/functions.php:147
+Stack trace:
+#0 {main}
+  thrown in /home1/abitcons/abit.ai/wp-content/themes/twentytwentyfour/functions.php on line 147
+[15-Dec-2025 23:02:13 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function add_action() in /home1/abitcons/abit.ai/wp-content/themes/twentytwentyfour/functions.php:147
+Stack trace:
+#0 {main}
+  thrown in /home1/abitcons/abit.ai/wp-content/themes/twentytwentyfour/functions.php on line 147
