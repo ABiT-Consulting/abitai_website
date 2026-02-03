@@ -2,4 +2,6 @@
 deployment:
   tasks:
     - export DEPLOYPATH=/home1/abitcons/abit.ai/
-    - /usr/bin/rsync -av --exclude='.git' --exclude='.cpanel.yml' --exclude='wp-content/uploads' ./ $DEPLOYPATH || /bin/rsync -av --exclude='.git' --exclude='.cpanel.yml' --exclude='wp-content/uploads' ./ $DEPLOYPATH || rsync -av --exclude='.git' --exclude='.cpanel.yml' --exclude='wp-content/uploads' ./ $DEPLOYPATH
+    - /bin/mkdir -p $DEPLOYPATH/wp-content/themes/astra
+    - /bin/cp -f wp-content/themes/astra/functions.php $DEPLOYPATH/wp-content/themes/astra/functions.php
+    - /bin/cp -f web.config $DEPLOYPATH/web.config
