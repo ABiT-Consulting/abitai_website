@@ -319,12 +319,17 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			--abit-ink: #0e1b2a;
 			--abit-teal: #00b6b1;
 			--abit-teal-soft: #c6f5f1;
-			--abit-magenta: #b334a3;
-			--abit-magenta-dark: #8f2382;
+			--abit-magenta: #0aaea8;
+			--abit-magenta-dark: #087f79;
 			--abit-surface: #ffffff;
 			--abit-surface-alt: #f3f6fb;
 			--abit-border: rgba(15,31,46,0.12);
 			--abit-shadow: 0 18px 40px rgba(10,18,30,0.12);
+			--ast-global-color-0: var(--abit-teal);
+			--ast-global-color-1: var(--abit-magenta);
+			--ast-global-color-2: var(--abit-navy-2);
+			--ast-global-color-3: var(--abit-ink);
+			--ast-global-color-4: #f5f7fb;
 		}
 		body {
 			background: linear-gradient(180deg, #f5f7fb 0%, #ffffff 40%, #f1f5fb 100%);
@@ -335,7 +340,7 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 		}
 		a:hover,
 		a:focus {
-			color: var(--abit-magenta);
+			color: #0aa097;
 		}
 		h1, h2, h3, h4, h5, h6,
 		.entry-title,
@@ -355,17 +360,17 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 		.main-header-menu .current-menu-item > a,
 		.main-header-menu a:hover,
 		.main-header-menu a:focus {
-			color: var(--abit-magenta);
+			color: var(--abit-teal);
 		}
 		.ast-button,
 		button,
 		input[type="button"],
 		input[type="submit"],
 		input[type="reset"] {
-			background: linear-gradient(135deg, var(--abit-magenta), #de5bc8);
-			color: #ffffff;
-			border: 1px solid var(--abit-magenta);
-			box-shadow: 0 12px 24px rgba(179,52,163,0.25);
+			background: linear-gradient(135deg, var(--abit-teal), #4ee4d5);
+			color: #082423;
+			border: 1px solid var(--abit-teal);
+			box-shadow: 0 12px 24px rgba(0,182,177,0.25);
 		}
 		.ast-button:hover,
 		.ast-button:focus,
@@ -377,9 +382,9 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 		input[type="submit"]:focus,
 		input[type="reset"]:hover,
 		input[type="reset"]:focus {
-			background: linear-gradient(135deg, var(--abit-magenta-dark), #c445b3);
-			border-color: var(--abit-magenta-dark);
-			color: #ffffff;
+			background: linear-gradient(135deg, #0aaea8, #35cfc0);
+			border-color: #0aaea8;
+			color: #041c1b;
 		}
 		.ast-outline-button,
 		.ast-button.ast-outline {
@@ -431,11 +436,11 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			scroll-margin-top: 96px;
 		}
 		.abitai-operator-section {
-			--operator-accent: #a42593;
+			--operator-accent: #00b6b1;
 			--operator-dark: #0a2540;
 			--operator-text: #1f2430;
 			padding: 80px 0;
-			background: linear-gradient(135deg, #f0fff9 0%, #f7f2ff 45%, #e9f2ff 100%);
+			background: linear-gradient(135deg, #f0fff9 0%, #f0fbf9 45%, #e9f2ff 100%);
 			border-top: 1px solid var(--ast-border-color);
 			border-bottom: 1px solid var(--ast-border-color);
 			position: relative;
@@ -461,7 +466,7 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 		.abitai-operator-section::after {
 			width: 320px;
 			height: 320px;
-			background: radial-gradient(circle, rgba(164, 37, 147, 0.22), transparent 70%);
+			background: radial-gradient(circle, rgba(0, 182, 177, 0.22), transparent 70%);
 			bottom: -120px;
 			left: -120px;
 		}
@@ -529,8 +534,8 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 		}
 		.abitai-operator__cta-primary:hover,
 		.abitai-operator__cta-primary:focus {
-			background: #7e1b6b;
-			border-color: #7e1b6b;
+			background: #0aa097;
+			border-color: #0aa097;
 			color: #ffffff;
 		}
 		.abitai-operator__cta-secondary {
@@ -546,7 +551,7 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			color: var(--operator-dark);
 		}
 		.abitai-operator__mockup {
-			background: linear-gradient(145deg, rgba(164, 37, 147, 0.12), rgba(10, 37, 64, 0.12));
+			background: linear-gradient(145deg, rgba(0, 182, 177, 0.12), rgba(10, 37, 64, 0.12));
 			border: 1px solid rgba(10, 37, 64, 0.1);
 			border-radius: 18px;
 			padding: 16px;
@@ -629,7 +634,7 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			box-shadow: 0 16px 30px rgba(10, 37, 64, 0.12);
 		}
 		.abitai-operator__security {
-			background: rgba(164, 37, 147, 0.08);
+			background: rgba(0, 182, 177, 0.12);
 			border-left: 4px solid var(--operator-accent);
 			padding: 16px 20px;
 			border-radius: 10px;
@@ -722,6 +727,61 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 				bottom: 76px;
 				padding: 9px 14px;
 			}
+		}
+		body .elementor-button,
+		body .elementor-button:visited,
+		body .elementor-widget-button .elementor-button {
+			background: linear-gradient(135deg, var(--abit-teal), #4fe3d5) !important;
+			color: #082a27 !important;
+			border-color: var(--abit-teal) !important;
+			box-shadow: 0 14px 28px rgba(0, 182, 177, 0.25) !important;
+		}
+		body .elementor-button:hover,
+		body .elementor-button:focus,
+		body .elementor-widget-button .elementor-button:hover,
+		body .elementor-widget-button .elementor-button:focus {
+			background: linear-gradient(135deg, #0aa097, #33d6c7) !important;
+			color: #041f1c !important;
+		}
+		body .hfe-nav-menu .menu-item a.hfe-menu-item,
+		body .hfe-nav-menu .menu-item a.hfe-sub-menu-item {
+			color: var(--abit-ink) !important;
+		}
+		body .hfe-nav-menu .menu-item a.hfe-menu-item:hover,
+		body .hfe-nav-menu .menu-item a.hfe-menu-item:focus,
+		body .hfe-nav-menu .menu-item.current-menu-item a.hfe-menu-item {
+			color: var(--abit-teal) !important;
+		}
+		body .hfe-nav-menu .menu-item a.hfe-menu-item.elementor-button,
+		body .hfe-nav-menu .menu-item a.hfe-menu-item.elementor-button:hover,
+		body .hfe-nav-menu .menu-item a.hfe-menu-item.elementor-button:focus {
+			color: #082a27 !important;
+		}
+		body .hfe-nav-menu-layout:not(.hfe-pointer__framed) .menu-item.parent a.hfe-menu-item:before,
+		body .hfe-nav-menu-layout:not(.hfe-pointer__framed) .menu-item.parent a.hfe-menu-item:after,
+		body .hfe-pointer__framed .menu-item.parent a.hfe-menu-item:before,
+		body .hfe-pointer__framed .menu-item.parent a.hfe-menu-item:after {
+			background-color: var(--abit-teal) !important;
+			border-color: var(--abit-teal) !important;
+		}
+		body .elementor-widget-icon-box .elementor-icon,
+		body .elementor-widget-icon-list .elementor-icon-list-icon i,
+		body .elementor-widget-icon-list .elementor-icon-list-icon svg,
+		body .elementor-widget-icon .elementor-icon,
+		body .elementor-widget-icon-box .elementor-icon-box-icon i,
+		body .elementor-widget-icon-box .elementor-icon-box-icon svg {
+			color: var(--abit-teal) !important;
+			fill: var(--abit-teal) !important;
+			border-color: var(--abit-teal) !important;
+		}
+		body .elementor-widget-icon-box.elementor-view-stacked .elementor-icon {
+			background-color: var(--abit-teal) !important;
+		}
+		body .elementor-widget-icon-box.elementor-view-framed .elementor-icon {
+			border-color: var(--abit-teal) !important;
+		}
+		body .elementor-element.elementor-element-04954ae > .elementor-background-overlay {
+			background: linear-gradient(135deg, rgba(11, 27, 43, 0.92), rgba(0, 182, 177, 0.25)) !important;
 		}
 		';
 
@@ -825,11 +885,16 @@ if ( ! function_exists( 'abitai_operator_hfe_menu_script' ) ) {
 }
 
 if ( ! function_exists( 'abitai_whatsapp_button' ) ) {
-	function abitai_whatsapp_button() {
+	function abitai_get_whatsapp_link() {
 		$phone_raw = '+971 52 520 2381';
 		$phone     = preg_replace( '/\D+/', '', $phone_raw );
 		$message   = rawurlencode( 'Hi, I want a demo of AbitAI Operator.' );
-		$link      = 'https://wa.me/' . $phone . '?text=' . $message;
+
+		return 'https://wa.me/' . $phone . '?text=' . $message;
+	}
+
+	function abitai_whatsapp_button() {
+		$link = abitai_get_whatsapp_link();
 		?>
 		<a class="abitai-whatsapp-button" href="<?php echo esc_url( $link ); ?>" target="_blank" rel="noopener noreferrer" aria-label="Chat on WhatsApp">
 			WhatsApp
@@ -837,5 +902,28 @@ if ( ! function_exists( 'abitai_whatsapp_button' ) ) {
 		<?php
 	}
 	add_action( 'wp_footer', 'abitai_whatsapp_button', 110 );
+}
+
+if ( ! function_exists( 'abitai_update_contact_cta_link' ) ) {
+	function abitai_update_contact_cta_link() {
+		$link = esc_url( abitai_get_whatsapp_link() );
+		?>
+		<script>
+			(function () {
+				var waLink = <?php echo wp_json_encode( $link ); ?>;
+				var buttons = document.querySelectorAll('.elementor-widget-button a.elementor-button-link, .elementor-widget-button a.elementor-button');
+				buttons.forEach(function (btn) {
+					var text = (btn.textContent || '').trim().toLowerCase();
+					if (text === 'contact us online') {
+						btn.setAttribute('href', waLink);
+						btn.setAttribute('target', '_blank');
+						btn.setAttribute('rel', 'noopener noreferrer');
+					}
+				});
+			})();
+		</script>
+		<?php
+	}
+	add_action( 'wp_footer', 'abitai_update_contact_cta_link', 120 );
 }
 
