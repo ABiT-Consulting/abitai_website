@@ -1,0 +1,5 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home1/abitcons/abit.ai/
+    - /bin/rsync -av --exclude='.git' --exclude='.cpanel.yml' --exclude='wp-content/uploads' ./ $DEPLOYPATH
