@@ -313,6 +313,120 @@ if ( ! function_exists( 'abitai_operator_head_marker' ) ) {
 if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 	function abitai_operator_enqueue_styles() {
 		$css = '
+		:root {
+			--abit-navy: #0b1b2b;
+			--abit-navy-2: #102c44;
+			--abit-ink: #0e1b2a;
+			--abit-teal: #00b6b1;
+			--abit-teal-soft: #c6f5f1;
+			--abit-magenta: #b334a3;
+			--abit-magenta-dark: #8f2382;
+			--abit-surface: #ffffff;
+			--abit-surface-alt: #f3f6fb;
+			--abit-border: rgba(15,31,46,0.12);
+			--abit-shadow: 0 18px 40px rgba(10,18,30,0.12);
+		}
+		body {
+			background: linear-gradient(180deg, #f5f7fb 0%, #ffffff 40%, #f1f5fb 100%);
+			color: var(--abit-ink);
+		}
+		a {
+			color: var(--abit-teal);
+		}
+		a:hover,
+		a:focus {
+			color: var(--abit-magenta);
+		}
+		h1, h2, h3, h4, h5, h6,
+		.entry-title,
+		.ast-archive-title {
+			color: var(--abit-navy);
+		}
+		.main-header-bar {
+			background: #ffffff;
+			border-bottom: 1px solid var(--abit-border);
+			box-shadow: 0 10px 24px rgba(10,18,30,0.06);
+		}
+		.main-header-menu a,
+		.ast-header-break-point .main-header-menu a {
+			color: var(--abit-ink);
+			font-weight: 600;
+		}
+		.main-header-menu .current-menu-item > a,
+		.main-header-menu a:hover,
+		.main-header-menu a:focus {
+			color: var(--abit-magenta);
+		}
+		.ast-button,
+		button,
+		input[type="button"],
+		input[type="submit"],
+		input[type="reset"] {
+			background: linear-gradient(135deg, var(--abit-magenta), #de5bc8);
+			color: #ffffff;
+			border: 1px solid var(--abit-magenta);
+			box-shadow: 0 12px 24px rgba(179,52,163,0.25);
+		}
+		.ast-button:hover,
+		.ast-button:focus,
+		button:hover,
+		button:focus,
+		input[type="button"]:hover,
+		input[type="button"]:focus,
+		input[type="submit"]:hover,
+		input[type="submit"]:focus,
+		input[type="reset"]:hover,
+		input[type="reset"]:focus {
+			background: linear-gradient(135deg, var(--abit-magenta-dark), #c445b3);
+			border-color: var(--abit-magenta-dark);
+			color: #ffffff;
+		}
+		.ast-outline-button,
+		.ast-button.ast-outline {
+			background: transparent;
+			color: var(--abit-navy);
+			border: 1px solid var(--abit-border);
+			box-shadow: none;
+		}
+		input[type="text"],
+		input[type="email"],
+		input[type="tel"],
+		input[type="url"],
+		input[type="password"],
+		textarea,
+		select {
+			background: #ffffff;
+			border: 1px solid var(--abit-border);
+			box-shadow: inset 0 1px 2px rgba(10,18,30,0.04);
+			color: var(--abit-ink);
+		}
+		.ast-article-post,
+		.ast-article-single,
+		.ast-separate-container .ast-article-post,
+		.ast-separate-container .ast-article-single {
+			background: var(--abit-surface);
+			border: 1px solid var(--abit-border);
+			box-shadow: var(--abit-shadow);
+			border-radius: 16px;
+		}
+		.widget,
+		.ast-single-post-order {
+			background: var(--abit-surface);
+			border: 1px solid var(--abit-border);
+			box-shadow: 0 12px 24px rgba(10,18,30,0.06);
+			border-radius: 14px;
+		}
+		.site-footer {
+			background: var(--abit-navy);
+			color: #d8e3f0;
+		}
+		.site-footer a {
+			color: var(--abit-teal);
+		}
+		.site-footer a:hover,
+		.site-footer a:focus {
+			color: #ffffff;
+		}
 		#abitai-operator {
 			scroll-margin-top: 96px;
 		}
