@@ -177,13 +177,16 @@ require_once ASTRA_THEME_DIR . 'inc/core/deprecated/deprecated-functions.php';
  * AbitAI Operator homepage section and navigation link.
  */
 if ( ! function_exists( 'abitai_operator_render_section' ) ) {
-	function abitai_operator_render_section() {
-		if ( ! is_front_page() ) {
-			return;
+	function abitai_operator_get_section_html() {
+		if ( ! is_front_page() || ! empty( $GLOBALS['abitai_operator_rendered'] ) ) {
+			return '';
 		}
 
+		$GLOBALS['abitai_operator_rendered'] = true;
 		$demo_link  = esc_url( home_url( '/#contactus' ) );
 		$sales_link = esc_url( home_url( '/#contactus' ) );
+
+		ob_start();
 		?>
 		<section id="abitai-operator" class="abitai-operator-section">
 			<div class="ast-container">
@@ -252,8 +255,33 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 			</div>
 		</section>
 		<?php
+		return ob_get_clean();
+	}
+
+	function abitai_operator_render_section() {
+		$html = abitai_operator_get_section_html();
+		if ( '' !== $html ) {
+			echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		}
 	}
 	add_action( 'astra_primary_content_bottom', 'abitai_operator_render_section', 99 );
+}
+
+if ( ! function_exists( 'abitai_operator_append_to_content' ) ) {
+	function abitai_operator_append_to_content( $content ) {
+		if ( ! is_front_page() || ! in_the_loop() || ! is_main_query() ) {
+			return $content;
+		}
+		if ( false !== strpos( $content, 'id="abitai-operator"' ) ) {
+			return $content;
+		}
+		$section = abitai_operator_get_section_html();
+		if ( '' === $section ) {
+			return $content;
+		}
+		return $content . $section;
+	}
+	add_filter( 'the_content', 'abitai_operator_append_to_content', 50 );
 }
 
 if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
