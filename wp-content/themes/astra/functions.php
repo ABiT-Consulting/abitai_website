@@ -583,6 +583,137 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 				align-items: flex-start;
 			}
 		}
+
+		.abitai-chat-widget {
+			--chat-accent: #a42593;
+			--chat-dark: #0a2540;
+			--chat-bg: #ffffff;
+			position: fixed;
+			right: 20px;
+			bottom: 20px;
+			z-index: 9999;
+			font-family: inherit;
+		}
+		.abitai-chat-button {
+			background: var(--chat-accent);
+			color: #ffffff;
+			border: none;
+			padding: 12px 18px;
+			border-radius: 999px;
+			font-weight: 700;
+			box-shadow: 0 12px 24px rgba(10, 37, 64, 0.2);
+			cursor: pointer;
+		}
+		.abitai-chat-panel {
+			position: absolute;
+			right: 0;
+			bottom: 56px;
+			width: 320px;
+			max-height: 460px;
+			background: var(--chat-bg);
+			border-radius: 18px;
+			box-shadow: 0 20px 40px rgba(10, 37, 64, 0.18);
+			border: 1px solid rgba(10, 37, 64, 0.12);
+			display: none;
+			flex-direction: column;
+			overflow: hidden;
+		}
+		.abitai-chat-panel.is-open {
+			display: flex;
+		}
+		.abitai-chat-header {
+			padding: 14px 16px;
+			background: linear-gradient(135deg, rgba(164, 37, 147, 0.12), rgba(10, 37, 64, 0.08));
+			border-bottom: 1px solid rgba(10, 37, 64, 0.1);
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+		}
+		.abitai-chat-title {
+			font-weight: 700;
+			color: var(--chat-dark);
+			font-size: 0.95rem;
+		}
+		.abitai-chat-close {
+			background: transparent;
+			border: none;
+			font-size: 1.1rem;
+			color: rgba(10, 37, 64, 0.7);
+			cursor: pointer;
+		}
+		.abitai-chat-messages {
+			padding: 14px 16px;
+			overflow-y: auto;
+			display: flex;
+			flex-direction: column;
+			gap: 10px;
+			flex: 1;
+		}
+		.abitai-chat-message {
+			padding: 10px 12px;
+			border-radius: 12px;
+			font-size: 0.9rem;
+			line-height: 1.4;
+			max-width: 90%;
+		}
+		.abitai-chat-message.bot {
+			background: rgba(10, 37, 64, 0.06);
+			color: var(--chat-dark);
+			align-self: flex-start;
+		}
+		.abitai-chat-message.user {
+			background: rgba(164, 37, 147, 0.12);
+			color: var(--chat-dark);
+			align-self: flex-end;
+		}
+		.abitai-chat-quick {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			padding: 0 16px 12px;
+		}
+		.abitai-chat-quick button {
+			border: 1px solid rgba(10, 37, 64, 0.15);
+			background: #ffffff;
+			border-radius: 999px;
+			padding: 6px 10px;
+			font-size: 0.75rem;
+			cursor: pointer;
+			color: var(--chat-dark);
+		}
+		.abitai-chat-input {
+			border-top: 1px solid rgba(10, 37, 64, 0.1);
+			display: flex;
+			gap: 8px;
+			padding: 12px 14px;
+		}
+		.abitai-chat-input input {
+			flex: 1;
+			border: 1px solid rgba(10, 37, 64, 0.2);
+			border-radius: 999px;
+			padding: 8px 12px;
+			font-size: 0.85rem;
+		}
+		.abitai-chat-input button {
+			background: var(--chat-accent);
+			color: #ffffff;
+			border: none;
+			padding: 8px 14px;
+			border-radius: 999px;
+			font-weight: 600;
+			cursor: pointer;
+		}
+		@media (max-width: 600px) {
+			.abitai-chat-panel {
+				width: min(92vw, 360px);
+				right: 0;
+			}
+			.abitai-chat-widget {
+				right: 12px;
+				bottom: 12px;
+			}
+		}
 		';
 
 		wp_add_inline_style( 'astra-theme-css', $css );
@@ -682,4 +813,143 @@ if ( ! function_exists( 'abitai_operator_hfe_menu_script' ) ) {
 		<?php
 	}
 	add_action( 'wp_footer', 'abitai_operator_hfe_menu_script', 100 );
+}
+
+if ( ! function_exists( 'abitai_operator_chat_widget' ) ) {
+	function abitai_operator_chat_widget() {
+		?>
+		<div class="abitai-chat-widget" id="abitaiChatWidget">
+			<button class="abitai-chat-button" type="button" id="abitaiChatToggle">Chat</button>
+			<div class="abitai-chat-panel" id="abitaiChatPanel" aria-hidden="true">
+				<div class="abitai-chat-header">
+					<span class="abitai-chat-title">AbitAI Operator Help</span>
+					<button class="abitai-chat-close" type="button" id="abitaiChatClose">×</button>
+				</div>
+				<div class="abitai-chat-messages" id="abitaiChatMessages"></div>
+				<div class="abitai-chat-quick" id="abitaiChatQuick">
+					<button type="button" data-question="What is AbitAI Operator?">What is AbitAI Operator?</button>
+					<button type="button" data-question="How does it work?">How does it work?</button>
+					<button type="button" data-question="What systems does it support?">Supported systems</button>
+					<button type="button" data-question="What can it do?">What can it do?</button>
+					<button type="button" data-question="How is data secured?">Security &amp; privacy</button>
+				</div>
+				<div class="abitai-chat-input">
+					<input type="text" id="abitaiChatInput" placeholder="Ask about AbitAI Operator..." autocomplete="off">
+					<button type="button" id="abitaiChatSend">Send</button>
+				</div>
+			</div>
+		</div>
+		<script>
+			(function () {
+				var panel = document.getElementById('abitaiChatPanel');
+				var toggle = document.getElementById('abitaiChatToggle');
+				var closeBtn = document.getElementById('abitaiChatClose');
+				var messages = document.getElementById('abitaiChatMessages');
+				var input = document.getElementById('abitaiChatInput');
+				var sendBtn = document.getElementById('abitaiChatSend');
+				var quick = document.getElementById('abitaiChatQuick');
+
+				if (!panel || !toggle || !messages || !input || !sendBtn) {
+					return;
+				}
+
+				var greetedKey = 'abitai_chat_greeted_v1';
+
+				function appendMessage(text, type) {
+					var msg = document.createElement('div');
+					msg.className = 'abitai-chat-message ' + type;
+					msg.textContent = text;
+					messages.appendChild(msg);
+					messages.scrollTop = messages.scrollHeight;
+				}
+
+				function addGreetingIfNeeded() {
+					if (localStorage.getItem(greetedKey)) {
+						return;
+					}
+					appendMessage('May I help you?', 'bot');
+					localStorage.setItem(greetedKey, '1');
+				}
+
+				function normalize(text) {
+					return text.toLowerCase();
+				}
+
+				function answerFor(text) {
+					var normalized = normalize(text);
+					var cta = ' Contact us to discuss a demo.';
+
+					if (normalized.indexOf('abitai operator') !== -1 || normalized.indexOf('abit ai operator') !== -1) {
+						return 'AbitAI Operator helps teams run SAP & Odoo operations via chat. How it works: connect SAP/Odoo, ask in chat, get results instantly.' + cta;
+					}
+					if (normalized.indexOf('what is') !== -1) {
+						return 'AbitAI Operator is a desktop assistant that lets teams create, list, and update SAP/Odoo operations using plain-language chat. How it works: connect SAP/Odoo, ask in chat, get results instantly.' + cta;
+					}
+					if (normalized.indexOf('how') !== -1 && normalized.indexOf('work') !== -1) {
+						return 'How it works: connect SAP/Odoo, ask in chat, and get results instantly with consistent outputs.' + cta;
+					}
+					if (normalized.indexOf('support') !== -1 || normalized.indexOf('system') !== -1) {
+						return 'AbitAI Operator supports SAP and Odoo.' + cta;
+					}
+					if (normalized.indexOf('what can') !== -1 || normalized.indexOf('can it') !== -1 || normalized.indexOf('do') !== -1) {
+						return 'It can create and update sales orders, quotations, purchase orders/requests, inventory transfers, and deliver reports or exports.' + cta;
+					}
+					if (normalized.indexOf('security') !== -1 || normalized.indexOf('privacy') !== -1) {
+						return 'Data stays within your infrastructure. Access is controlled and auditable.' + cta;
+					}
+					return 'AbitAI Operator streamlines SAP & Odoo operations through plain-language chat and fast, consistent outputs.' + cta;
+				}
+
+				function handleSend(text) {
+					var trimmed = text.trim();
+					if (!trimmed) {
+						return;
+					}
+					appendMessage(trimmed, 'user');
+					appendMessage(answerFor(trimmed), 'bot');
+				}
+
+				toggle.addEventListener('click', function () {
+					var open = panel.classList.toggle('is-open');
+					panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+					if (open) {
+						addGreetingIfNeeded();
+						setTimeout(function () { input.focus(); }, 50);
+					}
+				});
+
+				if (closeBtn) {
+					closeBtn.addEventListener('click', function () {
+						panel.classList.remove('is-open');
+						panel.setAttribute('aria-hidden', 'true');
+					});
+				}
+
+				sendBtn.addEventListener('click', function () {
+					handleSend(input.value);
+					input.value = '';
+				});
+
+				input.addEventListener('keydown', function (event) {
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						handleSend(input.value);
+						input.value = '';
+					}
+				});
+
+				if (quick) {
+					quick.addEventListener('click', function (event) {
+						var button = event.target.closest('button[data-question]');
+						if (!button) {
+							return;
+						}
+						handleSend(button.getAttribute('data-question'));
+					});
+				}
+			})();
+		</script>
+		<?php
+	}
+	add_action( 'wp_footer', 'abitai_operator_chat_widget', 120 );
 }
