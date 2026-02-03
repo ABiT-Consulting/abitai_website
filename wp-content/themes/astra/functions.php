@@ -196,6 +196,7 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 					</div>
 					<div class="abitai-operator-hero__content">
 						<p class="abitai-operator__eyebrow">Product</p>
+						<span class="abitai-operator__tag">Enterprise-ready desktop operator</span>
 						<h2 class="abitai-operator__title">AbitAI Operator</h2>
 						<p class="abitai-operator__subtitle">Quiet background intelligence for SAP &amp; Odoo operations.</p>
 						<p class="abitai-operator__description">A desktop assistant that lets teams create, list, and update SAP/Odoo operations using plain-language chat.</p>
@@ -259,7 +260,7 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 	function abitai_operator_enqueue_styles() {
 		$css = '
 		#abitai-operator {
-			scroll-margin-top: 0;
+			scroll-margin-top: 96px;
 		}
 		.abitai-operator-section {
 			--operator-accent: #a42593;
@@ -321,6 +322,19 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			margin: 0 0 12px;
 			text-transform: none;
 			color: var(--operator-dark);
+		}
+		.abitai-operator__tag {
+			display: inline-flex;
+			align-items: center;
+			padding: 6px 12px;
+			border-radius: 999px;
+			font-size: 0.8rem;
+			font-weight: 600;
+			letter-spacing: 0.01em;
+			background: rgba(20, 184, 166, 0.12);
+			color: #0f766e;
+			border: 1px solid rgba(20, 184, 166, 0.35);
+			margin-bottom: 14px;
 		}
 		.abitai-operator__subtitle {
 			font-size: 1.25rem;
