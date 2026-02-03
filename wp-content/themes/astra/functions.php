@@ -594,6 +594,25 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			z-index: 9999;
 			font-family: inherit;
 		}
+		.abitai-whatsapp-button {
+			position: fixed;
+			right: 20px;
+			bottom: 88px;
+			background: #25D366;
+			color: #ffffff;
+			border-radius: 999px;
+			padding: 10px 16px;
+			font-weight: 700;
+			box-shadow: 0 12px 24px rgba(10, 37, 64, 0.18);
+			text-decoration: none;
+			z-index: 9999;
+		}
+		.abitai-whatsapp-button:hover,
+		.abitai-whatsapp-button:focus {
+			background: #1da851;
+			color: #ffffff;
+			text-decoration: none;
+		}
 		.abitai-chat-button {
 			background: var(--chat-accent);
 			color: #ffffff;
@@ -713,6 +732,11 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 				right: 12px;
 				bottom: 12px;
 			}
+			.abitai-whatsapp-button {
+				right: 12px;
+				bottom: 76px;
+				padding: 9px 14px;
+			}
 		}
 		';
 
@@ -813,6 +837,21 @@ if ( ! function_exists( 'abitai_operator_hfe_menu_script' ) ) {
 		<?php
 	}
 	add_action( 'wp_footer', 'abitai_operator_hfe_menu_script', 100 );
+}
+
+if ( ! function_exists( 'abitai_whatsapp_button' ) ) {
+	function abitai_whatsapp_button() {
+		$phone_raw = '+971 52 520 2381';
+		$phone     = preg_replace( '/\D+/', '', $phone_raw );
+		$message   = rawurlencode( 'Hi, I want a demo of AbitAI Operator.' );
+		$link      = 'https://wa.me/' . $phone . '?text=' . $message;
+		?>
+		<a class="abitai-whatsapp-button" href="<?php echo esc_url( $link ); ?>" target="_blank" rel="noopener noreferrer" aria-label="Chat on WhatsApp">
+			WhatsApp
+		</a>
+		<?php
+	}
+	add_action( 'wp_footer', 'abitai_whatsapp_button', 110 );
 }
 
 if ( ! function_exists( 'abitai_operator_chat_widget' ) ) {
