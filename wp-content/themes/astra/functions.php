@@ -713,6 +713,7 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			line-height: 1.45;
 			box-shadow: 0 8px 18px rgba(12,34,26,0.08);
 			max-width: 92%;
+			overflow: hidden;
 		}
 		.abitai-demo-chat__bubble--user {
 			align-self: flex-end;
@@ -787,12 +788,17 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			border-collapse: collapse;
 			font-size: 0.75rem;
 			margin-top: 8px;
+			table-layout: fixed;
+			word-break: break-word;
+			overflow-wrap: anywhere;
 		}
 		.abitai-demo-chat__table th,
 		.abitai-demo-chat__table td {
 			padding: 6px 8px;
 			border-bottom: 1px solid rgba(7,38,30,0.08);
 			text-align: left;
+			word-break: break-word;
+			overflow-wrap: anywhere;
 		}
 		.abitai-demo-chat__table th {
 			background: rgba(15,31,27,0.06);
