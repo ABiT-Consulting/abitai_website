@@ -177,8 +177,22 @@ require_once ASTRA_THEME_DIR . 'inc/core/deprecated/deprecated-functions.php';
  * AbitAI Operator homepage section and navigation link.
  */
 if ( ! function_exists( 'abitai_operator_render_section' ) ) {
+	function abitai_operator_is_front_request() {
+		if ( is_front_page() || is_home() ) {
+			return true;
+		}
+
+		$path = '/';
+		if ( ! empty( $_SERVER['REQUEST_URI'] ) ) {
+			$path = (string) wp_parse_url( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ), PHP_URL_PATH );
+		}
+		$path = rtrim( $path, '/' );
+
+		return '' === $path || '/index.php' === $path;
+	}
+
 	function abitai_operator_get_section_html() {
-		if ( ! is_front_page() || ! empty( $GLOBALS['abitai_operator_rendered'] ) ) {
+		if ( ! abitai_operator_is_front_request() || ! empty( $GLOBALS['abitai_operator_rendered'] ) ) {
 			return '';
 		}
 
@@ -265,11 +279,13 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 		}
 	}
 	add_action( 'astra_primary_content_bottom', 'abitai_operator_render_section', 99 );
+	add_action( 'astra_content_bottom', 'abitai_operator_render_section', 99 );
+	add_action( 'get_footer', 'abitai_operator_render_section', 5 );
 }
 
 if ( ! function_exists( 'abitai_operator_append_to_content' ) ) {
 	function abitai_operator_append_to_content( $content ) {
-		if ( ! is_front_page() || ! in_the_loop() || ! is_main_query() ) {
+		if ( ! abitai_operator_is_front_request() || ! in_the_loop() || ! is_main_query() ) {
 			return $content;
 		}
 		if ( false !== strpos( $content, 'id="abitai-operator"' ) ) {
@@ -282,6 +298,16 @@ if ( ! function_exists( 'abitai_operator_append_to_content' ) ) {
 		return $content . $section;
 	}
 	add_filter( 'the_content', 'abitai_operator_append_to_content', 50 );
+}
+
+if ( ! function_exists( 'abitai_operator_head_marker' ) ) {
+	function abitai_operator_head_marker() {
+		if ( ! abitai_operator_is_front_request() ) {
+			return;
+		}
+		echo "\n<!-- AbitAI Operator active -->\n";
+	}
+	add_action( 'wp_head', 'abitai_operator_head_marker', 1 );
 }
 
 if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
