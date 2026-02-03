@@ -210,6 +210,12 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 							<img src="<?php echo esc_url( home_url( '/wp-content/uploads/2026/02/abitai-operator-ui.png' ) ); ?>" alt="AbitAI Operator workspace" loading="lazy" decoding="async">
 							<figcaption class="abitai-operator__mockup-caption">Live operator workspace</figcaption>
 						</figure>
+						<div class="abitai-operator__video">
+							<button class="abitai-operator__video-trigger" type="button" aria-label="Play AbitAI Operator demo video" data-video-id="0gi6xlinoZ8" style="--video-thumb: url('https://img.youtube.com/vi/0gi6xlinoZ8/hqdefault.jpg');">
+								<span class="abitai-operator__video-play" aria-hidden="true"></span>
+								<span class="abitai-operator__video-label">Watch demo video</span>
+							</button>
+						</div>
 					</div>
 					<div class="abitai-operator-hero__content">
 						<p class="abitai-operator__eyebrow">Product</p>
@@ -263,6 +269,16 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 						<div class="abitai-operator__step">
 							<span class="abitai-operator__step-number">3</span>
 							<span class="abitai-operator__step-text">Get results instantly</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="abitai-operator__video-modal" aria-hidden="true">
+					<div class="abitai-operator__video-backdrop" data-video-close></div>
+					<div class="abitai-operator__video-dialog" role="dialog" aria-modal="true" aria-label="AbitAI Operator demo video">
+						<button class="abitai-operator__video-close" type="button" data-video-close aria-label="Close video">×</button>
+						<div class="abitai-operator__video-frame">
+							<iframe title="AbitAI Operator Demo" allow="autoplay; encrypted-media" allowfullscreen></iframe>
 						</div>
 					</div>
 				</div>
@@ -483,6 +499,8 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 		}
 		.abitai-operator-hero__media {
 			align-self: start;
+			display: grid;
+			gap: 20px;
 		}
 		.abitai-operator__eyebrow {
 			text-transform: uppercase;
@@ -559,6 +577,9 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			text-align: center;
 			margin: 0;
 			max-width: 560px;
+			width: 100%;
+			margin-left: auto;
+			margin-right: auto;
 		}
 		.abitai-operator__mockup--secondary {
 			background: #ffffff;
@@ -575,6 +596,128 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			margin-top: 10px;
 			font-size: 0.85rem;
 			color: rgba(31, 36, 48, 0.7);
+		}
+		.abitai-operator__video {
+			margin-top: 18px;
+			max-width: 560px;
+			width: 100%;
+			margin-left: auto;
+			margin-right: auto;
+			--abitai-video-height: auto;
+		}
+		.abitai-operator__video-trigger {
+			width: 100%;
+			height: var(--abitai-video-height);
+			aspect-ratio: 16 / 9;
+			border: 1px solid rgba(10, 37, 64, 0.12);
+			border-radius: 18px;
+			padding: 0;
+			background: #0b1b2b;
+			color: #ffffff;
+			cursor: pointer;
+			overflow: hidden;
+			box-shadow: 0 16px 32px rgba(10, 37, 64, 0.12);
+			position: relative;
+			display: grid;
+			place-items: center;
+			text-align: center;
+		}
+		.abitai-operator__video-trigger::before {
+			content: "";
+			position: absolute;
+			inset: 0;
+			background-image: var(--video-thumb);
+			background-size: cover;
+			background-position: center;
+			filter: saturate(1.05);
+		}
+		.abitai-operator__video-trigger::after {
+			content: "";
+			position: absolute;
+			inset: 0;
+			background: linear-gradient(120deg, rgba(11, 27, 43, 0.6), rgba(0, 182, 177, 0.25));
+		}
+		.abitai-operator__video-play {
+			position: relative;
+			width: 64px;
+			height: 64px;
+			border-radius: 50%;
+			background: rgba(255, 255, 255, 0.9);
+			box-shadow: 0 12px 22px rgba(10, 37, 64, 0.2);
+		}
+		.abitai-operator__video-play::before {
+			content: "";
+			position: absolute;
+			left: 26px;
+			top: 20px;
+			border-style: solid;
+			border-width: 12px 0 12px 18px;
+			border-color: transparent transparent transparent #0b1b2b;
+		}
+		.abitai-operator__video-label {
+			position: relative;
+			margin-top: 12px;
+			font-weight: 600;
+			display: block;
+			color: #ffffff;
+		}
+		.abitai-operator__video-trigger:hover,
+		.abitai-operator__video-trigger:focus {
+			box-shadow: 0 18px 36px rgba(10, 37, 64, 0.2);
+		}
+		.abitai-operator__video-modal {
+			position: fixed;
+			inset: 0;
+			display: none;
+			z-index: 10000;
+		}
+		.abitai-operator__video-modal.is-open {
+			display: block;
+		}
+		.abitai-operator__video-backdrop {
+			position: absolute;
+			inset: 0;
+			background: rgba(8, 18, 30, 0.72);
+		}
+		.abitai-operator__video-dialog {
+			position: relative;
+			max-width: 920px;
+			width: calc(100% - 32px);
+			margin: 6vh auto;
+			background: #0b1b2b;
+			border-radius: 20px;
+			padding: 18px;
+			box-shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
+		}
+		.abitai-operator__video-frame {
+			position: relative;
+			width: 100%;
+			padding-top: 56.25%;
+		}
+		.abitai-operator__video-frame iframe {
+			position: absolute;
+			inset: 0;
+			width: 100%;
+			height: 100%;
+			border: 0;
+			border-radius: 14px;
+		}
+		.abitai-operator__video-close {
+			position: absolute;
+			top: 10px;
+			right: 12px;
+			border: none;
+			background: rgba(255, 255, 255, 0.12);
+			color: #ffffff;
+			font-size: 24px;
+			width: 36px;
+			height: 36px;
+			border-radius: 50%;
+			cursor: pointer;
+		}
+		.abitai-operator__video-close:hover,
+		.abitai-operator__video-close:focus {
+			background: rgba(255, 255, 255, 0.2);
 		}
 		.abitai-operator__panel {
 			background: #ffffff;
@@ -882,6 +1025,85 @@ if ( ! function_exists( 'abitai_operator_hfe_menu_script' ) ) {
 		<?php
 	}
 	add_action( 'wp_footer', 'abitai_operator_hfe_menu_script', 100 );
+}
+
+if ( ! function_exists( 'abitai_operator_video_modal_script' ) ) {
+	function abitai_operator_video_modal_script() {
+		?>
+		<script>
+			(function () {
+				var modal = document.querySelector('.abitai-operator__video-modal');
+				var mediaWrap = document.querySelector('.abitai-operator__video');
+				var mockup = document.querySelector('.abitai-operator__mockup--primary');
+				var mockupImg = mockup ? mockup.querySelector('img') : null;
+				var resizeTimer;
+				function syncVideoHeight() {
+					if (!mediaWrap || !mockup) {
+						return;
+					}
+					var height = mockup.offsetHeight;
+					if (height) {
+						mediaWrap.style.setProperty('--abitai-video-height', height + 'px');
+					}
+				}
+				if (mockupImg && !mockupImg.complete) {
+					mockupImg.addEventListener('load', syncVideoHeight);
+				}
+				if (window.ResizeObserver && mockup) {
+					new ResizeObserver(syncVideoHeight).observe(mockup);
+				}
+				window.addEventListener('load', syncVideoHeight);
+				window.addEventListener('resize', function () {
+					clearTimeout(resizeTimer);
+					resizeTimer = setTimeout(syncVideoHeight, 120);
+				});
+				syncVideoHeight();
+				if (!modal) {
+					return;
+				}
+				var iframe = modal.querySelector('iframe');
+				var triggers = document.querySelectorAll('.abitai-operator__video-trigger');
+				function openModal(videoId) {
+					if (!iframe) {
+						return;
+					}
+					var src = 'https://www.youtube.com/embed/' + videoId + '?autoplay=1&rel=0';
+					iframe.setAttribute('src', src);
+					modal.classList.add('is-open');
+					modal.setAttribute('aria-hidden', 'false');
+					document.body.style.overflow = 'hidden';
+				}
+				function closeModal() {
+					modal.classList.remove('is-open');
+					modal.setAttribute('aria-hidden', 'true');
+					if (iframe) {
+						iframe.setAttribute('src', '');
+					}
+					document.body.style.overflow = '';
+				}
+				triggers.forEach(function (trigger) {
+					trigger.addEventListener('click', function () {
+						var videoId = trigger.getAttribute('data-video-id');
+						if (videoId) {
+							openModal(videoId);
+						}
+					});
+				});
+				modal.addEventListener('click', function (event) {
+					if (event.target && event.target.hasAttribute('data-video-close')) {
+						closeModal();
+					}
+				});
+				document.addEventListener('keydown', function (event) {
+					if (event.key === 'Escape' && modal.classList.contains('is-open')) {
+						closeModal();
+					}
+				});
+			})();
+		</script>
+		<?php
+	}
+	add_action( 'wp_footer', 'abitai_operator_video_modal_script', 105 );
 }
 
 if ( ! function_exists( 'abitai_whatsapp_button' ) ) {
