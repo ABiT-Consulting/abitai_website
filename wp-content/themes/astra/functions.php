@@ -583,21 +583,229 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 				align-items: flex-start;
 			}
 		}
-
-		.abitai-chat-widget {
-			--chat-accent: #a42593;
-			--chat-dark: #0a2540;
-			--chat-bg: #ffffff;
+		:root {
+			--mint-0: #e7fff6;
+			--mint-1: #d4fff2;
+			--mint-2: #bff7e9;
+			--mint-3: #9eead6;
+			--teal-0: #00bfa5;
+			--teal-1: #19c6b0;
+			--teal-2: #48d8c4;
+			--ink-0: #0f1f1b;
+			--ink-1: #3c4b46;
+			--card: rgba(255,255,255,0.85);
+			--border: rgba(7,38,30,0.08);
+			--shadow-soft: 0 18px 40px rgba(12,34,26,0.12);
+			--shadow-btn: 0 12px 20px rgba(12,34,26,0.18);
+		}
+		.abitai-demo-chat {
 			position: fixed;
 			right: 20px;
 			bottom: 20px;
 			z-index: 9999;
 			font-family: inherit;
 		}
+		.abitai-demo-chat__toggle {
+			border: none;
+			border-radius: 999px;
+			padding: 12px 18px;
+			font-weight: 700;
+			cursor: pointer;
+			background: linear-gradient(135deg, #00c4a7, #46e0c7);
+			color: var(--ink-0);
+			box-shadow: var(--shadow-btn);
+			transition: box-shadow 0.2s ease, transform 0.2s ease;
+		}
+		.abitai-demo-chat__toggle:hover,
+		.abitai-demo-chat__toggle:focus {
+			box-shadow: 0 16px 28px rgba(12,34,26,0.2);
+			transform: translateY(-1px);
+		}
+		.abitai-demo-chat__panel {
+			position: absolute;
+			right: 0;
+			bottom: 62px;
+			width: 380px;
+			max-height: 560px;
+			display: none;
+		}
+		.abitai-demo-chat__panel.is-open {
+			display: block;
+		}
+		.abitai-demo-chat__frame {
+			background: linear-gradient(135deg, var(--mint-1), #dffaf2 35%, #c6f2e4 70%, #baf0dc);
+			border-radius: 28px;
+			padding: 18px;
+			box-shadow: var(--shadow-soft);
+			border: 1px solid var(--border);
+		}
+		.abitai-demo-chat__card {
+			background: var(--card);
+			border-radius: 26px;
+			border: 1px solid var(--border);
+			padding: 22px;
+			box-shadow: var(--shadow-soft);
+			display: flex;
+			flex-direction: column;
+			gap: 16px;
+			max-height: 520px;
+		}
+		.abitai-demo-chat__header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+		}
+		.abitai-demo-chat__meta {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+		.abitai-demo-chat__brand {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+		}
+		.abitai-demo-chat__brand-circle {
+			width: 40px;
+			height: 40px;
+			border-radius: 16px;
+			background: linear-gradient(145deg, #84f0c6, #5cdac0, #2db7b0);
+			box-shadow: 0 10px 18px rgba(12,34,26,0.18);
+		}
+		.abitai-demo-chat__title {
+			font-weight: 700;
+			color: var(--ink-0);
+		}
+		.abitai-demo-chat__subtitle {
+			font-size: 0.8rem;
+			color: var(--ink-1);
+		}
+		.abitai-demo-chat__badge {
+			font-size: 0.7rem;
+			padding: 6px 10px;
+			border-radius: 999px;
+			background: rgba(255,255,255,0.7);
+			border: 1px solid var(--border);
+			color: var(--ink-1);
+			font-weight: 600;
+		}
+		.abitai-demo-chat__close {
+			background: transparent;
+			border: none;
+			font-size: 1.1rem;
+			color: var(--ink-1);
+			cursor: pointer;
+		}
+		.abitai-demo-chat__messages {
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+			overflow-y: auto;
+			padding-right: 4px;
+			flex: 1;
+			min-height: 160px;
+		}
+		.abitai-demo-chat__bubble {
+			padding: 10px 12px;
+			border-radius: 18px;
+			font-size: 0.88rem;
+			line-height: 1.45;
+			box-shadow: 0 8px 18px rgba(12,34,26,0.08);
+			max-width: 92%;
+		}
+		.abitai-demo-chat__bubble--user {
+			align-self: flex-end;
+			background: linear-gradient(135deg, var(--mint-2), var(--mint-1));
+			border: 1px solid #7ee3c9;
+			color: var(--ink-0);
+		}
+		.abitai-demo-chat__bubble--bot {
+			align-self: flex-start;
+			background: #ffffff;
+			border: 1px solid #e9f6f1;
+			color: var(--ink-0);
+		}
+		.abitai-demo-chat__cta {
+			margin-top: 8px;
+			font-weight: 600;
+			color: var(--ink-1);
+		}
+		.abitai-demo-chat__quick {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+		}
+		.abitai-demo-chat__quick button {
+			border: 1px solid var(--border);
+			background: rgba(255,255,255,0.8);
+			padding: 6px 12px;
+			border-radius: 999px;
+			font-size: 0.72rem;
+			color: var(--ink-0);
+			cursor: pointer;
+			box-shadow: 0 8px 14px rgba(12,34,26,0.08);
+			transition: box-shadow 0.2s ease, transform 0.2s ease;
+		}
+		.abitai-demo-chat__quick button:hover,
+		.abitai-demo-chat__quick button:focus {
+			box-shadow: 0 12px 20px rgba(12,34,26,0.16);
+			transform: translateY(-1px);
+		}
+		.abitai-demo-chat__input {
+			display: flex;
+			gap: 10px;
+			align-items: center;
+		}
+		.abitai-demo-chat__input input {
+			flex: 1;
+			border: 1px solid var(--border);
+			border-radius: 999px;
+			padding: 8px 12px;
+			font-size: 0.85rem;
+			background: rgba(255,255,255,0.9);
+			color: var(--ink-0);
+		}
+		.abitai-demo-chat__input button {
+			border: none;
+			border-radius: 999px;
+			padding: 8px 14px;
+			font-weight: 600;
+			background: linear-gradient(135deg, #00c4a7, #46e0c7);
+			color: var(--ink-0);
+			cursor: pointer;
+			box-shadow: var(--shadow-btn);
+			transition: box-shadow 0.2s ease, transform 0.2s ease;
+		}
+		.abitai-demo-chat__input button:hover,
+		.abitai-demo-chat__input button:focus {
+			box-shadow: 0 16px 28px rgba(12,34,26,0.2);
+			transform: translateY(-1px);
+		}
+		.abitai-demo-chat__table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 0.75rem;
+			margin-top: 8px;
+		}
+		.abitai-demo-chat__table th,
+		.abitai-demo-chat__table td {
+			padding: 6px 8px;
+			border-bottom: 1px solid rgba(7,38,30,0.08);
+			text-align: left;
+		}
+		.abitai-demo-chat__table th {
+			background: rgba(15,31,27,0.06);
+			font-weight: 600;
+			color: var(--ink-1);
+		}
+		.abitai-demo-chat__table tr:last-child td {
+			border-bottom: none;
+		}
 		.abitai-whatsapp-button {
 			position: fixed;
 			right: 20px;
-			bottom: 88px;
+			bottom: 92px;
 			background: #25D366;
 			color: #ffffff;
 			border-radius: 999px;
@@ -613,122 +821,12 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			color: #ffffff;
 			text-decoration: none;
 		}
-		.abitai-chat-button {
-			background: var(--chat-accent);
-			color: #ffffff;
-			border: none;
-			padding: 12px 18px;
-			border-radius: 999px;
-			font-weight: 700;
-			box-shadow: 0 12px 24px rgba(10, 37, 64, 0.2);
-			cursor: pointer;
-		}
-		.abitai-chat-panel {
-			position: absolute;
-			right: 0;
-			bottom: 56px;
-			width: 320px;
-			max-height: 460px;
-			background: var(--chat-bg);
-			border-radius: 18px;
-			box-shadow: 0 20px 40px rgba(10, 37, 64, 0.18);
-			border: 1px solid rgba(10, 37, 64, 0.12);
-			display: none;
-			flex-direction: column;
-			overflow: hidden;
-		}
-		.abitai-chat-panel.is-open {
-			display: flex;
-		}
-		.abitai-chat-header {
-			padding: 14px 16px;
-			background: linear-gradient(135deg, rgba(164, 37, 147, 0.12), rgba(10, 37, 64, 0.08));
-			border-bottom: 1px solid rgba(10, 37, 64, 0.1);
-			display: flex;
-			align-items: center;
-			justify-content: space-between;
-			gap: 12px;
-		}
-		.abitai-chat-title {
-			font-weight: 700;
-			color: var(--chat-dark);
-			font-size: 0.95rem;
-		}
-		.abitai-chat-close {
-			background: transparent;
-			border: none;
-			font-size: 1.1rem;
-			color: rgba(10, 37, 64, 0.7);
-			cursor: pointer;
-		}
-		.abitai-chat-messages {
-			padding: 14px 16px;
-			overflow-y: auto;
-			display: flex;
-			flex-direction: column;
-			gap: 10px;
-			flex: 1;
-		}
-		.abitai-chat-message {
-			padding: 10px 12px;
-			border-radius: 12px;
-			font-size: 0.9rem;
-			line-height: 1.4;
-			max-width: 90%;
-		}
-		.abitai-chat-message.bot {
-			background: rgba(10, 37, 64, 0.06);
-			color: var(--chat-dark);
-			align-self: flex-start;
-		}
-		.abitai-chat-message.user {
-			background: rgba(164, 37, 147, 0.12);
-			color: var(--chat-dark);
-			align-self: flex-end;
-		}
-		.abitai-chat-quick {
-			display: flex;
-			flex-wrap: wrap;
-			gap: 8px;
-			padding: 0 16px 12px;
-		}
-		.abitai-chat-quick button {
-			border: 1px solid rgba(10, 37, 64, 0.15);
-			background: #ffffff;
-			border-radius: 999px;
-			padding: 6px 10px;
-			font-size: 0.75rem;
-			cursor: pointer;
-			color: var(--chat-dark);
-		}
-		.abitai-chat-input {
-			border-top: 1px solid rgba(10, 37, 64, 0.1);
-			display: flex;
-			gap: 8px;
-			padding: 12px 14px;
-		}
-		.abitai-chat-input input {
-			flex: 1;
-			border: 1px solid rgba(10, 37, 64, 0.2);
-			border-radius: 999px;
-			padding: 8px 12px;
-			font-size: 0.85rem;
-		}
-		.abitai-chat-input button {
-			background: var(--chat-accent);
-			color: #ffffff;
-			border: none;
-			padding: 8px 14px;
-			border-radius: 999px;
-			font-weight: 600;
-			cursor: pointer;
-		}
 		@media (max-width: 600px) {
-			.abitai-chat-panel {
-				width: min(92vw, 360px);
+			.abitai-demo-chat__panel {
+				width: min(92vw, 380px);
 				right: 0;
 			}
-			.abitai-chat-widget {
+			.abitai-demo-chat {
 				right: 12px;
 				bottom: 12px;
 			}
@@ -856,48 +954,70 @@ if ( ! function_exists( 'abitai_whatsapp_button' ) ) {
 
 if ( ! function_exists( 'abitai_operator_chat_widget' ) ) {
 	function abitai_operator_chat_widget() {
+		if ( function_exists( 'abitai_operator_is_front_request' ) && ! abitai_operator_is_front_request() ) {
+			return;
+		}
 		?>
-		<div class="abitai-chat-widget" id="abitaiChatWidget">
-			<button class="abitai-chat-button" type="button" id="abitaiChatToggle">Chat</button>
-			<div class="abitai-chat-panel" id="abitaiChatPanel" aria-hidden="true">
-				<div class="abitai-chat-header">
-					<span class="abitai-chat-title">AbitAI Operator Help</span>
-					<button class="abitai-chat-close" type="button" id="abitaiChatClose">×</button>
-				</div>
-				<div class="abitai-chat-messages" id="abitaiChatMessages"></div>
-				<div class="abitai-chat-quick" id="abitaiChatQuick">
-					<button type="button" data-question="What is AbitAI Operator?">What is AbitAI Operator?</button>
-					<button type="button" data-question="How does it work?">How does it work?</button>
-					<button type="button" data-question="What systems does it support?">Supported systems</button>
-					<button type="button" data-question="What can it do?">What can it do?</button>
-					<button type="button" data-question="How is data secured?">Security &amp; privacy</button>
-				</div>
-				<div class="abitai-chat-input">
-					<input type="text" id="abitaiChatInput" placeholder="Ask about AbitAI Operator..." autocomplete="off">
-					<button type="button" id="abitaiChatSend">Send</button>
+		<div class="abitai-demo-chat" id="abitaiDemoChat">
+			<button class="abitai-demo-chat__toggle" type="button" id="abitaiDemoChatToggle">Operator Demo</button>
+			<div class="abitai-demo-chat__panel" id="abitaiDemoChatPanel" aria-hidden="true">
+				<div class="abitai-demo-chat__frame">
+					<div class="abitai-demo-chat__card">
+						<div class="abitai-demo-chat__header">
+							<div class="abitai-demo-chat__brand">
+								<span class="abitai-demo-chat__brand-circle" aria-hidden="true"></span>
+								<div>
+									<div class="abitai-demo-chat__title">AbitAI Operator</div>
+									<div class="abitai-demo-chat__subtitle">Quiet background intelligence</div>
+								</div>
+							</div>
+							<div class="abitai-demo-chat__meta">
+								<span class="abitai-demo-chat__badge">Demo data</span>
+								<button class="abitai-demo-chat__close" type="button" id="abitaiDemoChatClose" aria-label="Close">&times;</button>
+							</div>
+						</div>
+						<div class="abitai-demo-chat__messages" id="abitaiDemoChatMessages"></div>
+						<div class="abitai-demo-chat__quick" id="abitaiDemoChatQuick">
+							<button type="button" data-question="sales order list">Sales Orders</button>
+							<button type="button" data-question="sales quotation list">Sales Quotations</button>
+							<button type="button" data-question="purchase order list">Purchase Orders</button>
+							<button type="button" data-question="purchase request list">Purchase Requests</button>
+							<button type="button" data-question="inventory transfer request">Inventory Transfers</button>
+							<button type="button" data-question="customers list">Customers</button>
+						</div>
+						<div class="abitai-demo-chat__input">
+							<input type="text" id="abitaiDemoChatInput" placeholder="Ask about AbitAI Operator..." autocomplete="off">
+							<button type="button" id="abitaiDemoChatSend">Send</button>
+						</div>
+					</div>
 				</div>
 			</div>
 		</div>
 		<script>
 			(function () {
-				var panel = document.getElementById('abitaiChatPanel');
-				var toggle = document.getElementById('abitaiChatToggle');
-				var closeBtn = document.getElementById('abitaiChatClose');
-				var messages = document.getElementById('abitaiChatMessages');
-				var input = document.getElementById('abitaiChatInput');
-				var sendBtn = document.getElementById('abitaiChatSend');
-				var quick = document.getElementById('abitaiChatQuick');
+				var panel = document.getElementById('abitaiDemoChatPanel');
+				var toggle = document.getElementById('abitaiDemoChatToggle');
+				var closeBtn = document.getElementById('abitaiDemoChatClose');
+				var messages = document.getElementById('abitaiDemoChatMessages');
+				var input = document.getElementById('abitaiDemoChatInput');
+				var sendBtn = document.getElementById('abitaiDemoChatSend');
+				var quick = document.getElementById('abitaiDemoChatQuick');
 
 				if (!panel || !toggle || !messages || !input || !sendBtn) {
 					return;
 				}
 
-				var greetedKey = 'abitai_chat_greeted_v1';
+				var greetedKey = 'abitai_demo_chat_greeted_v1';
+				var ctaText = 'Contact us for a demo.';
 
-				function appendMessage(text, type) {
+				function appendMessage(text, type, asHtml) {
 					var msg = document.createElement('div');
-					msg.className = 'abitai-chat-message ' + type;
-					msg.textContent = text;
+					msg.className = 'abitai-demo-chat__bubble ' + (type === 'user' ? 'abitai-demo-chat__bubble--user' : 'abitai-demo-chat__bubble--bot');
+					if (asHtml) {
+						msg.innerHTML = text;
+					} else {
+						msg.textContent = text;
+					}
 					messages.appendChild(msg);
 					messages.scrollTop = messages.scrollHeight;
 				}
@@ -906,7 +1026,7 @@ if ( ! function_exists( 'abitai_operator_chat_widget' ) ) {
 					if (localStorage.getItem(greetedKey)) {
 						return;
 					}
-					appendMessage('May I help you?', 'bot');
+					appendMessage('May I help you?', 'bot', false);
 					localStorage.setItem(greetedKey, '1');
 				}
 
@@ -914,29 +1034,154 @@ if ( ! function_exists( 'abitai_operator_chat_widget' ) ) {
 					return text.toLowerCase();
 				}
 
+				function buildTable(title, headers, rows) {
+					var html = '<strong>' + title + '</strong>';
+					html += '<table class="abitai-demo-chat__table"><thead><tr>';
+					headers.forEach(function (header) {
+						html += '<th>' + header + '</th>';
+					});
+					html += '</tr></thead><tbody>';
+					rows.forEach(function (row) {
+						html += '<tr>';
+						row.forEach(function (cell) {
+							html += '<td>' + cell + '</td>';
+						});
+						html += '</tr>';
+					});
+					html += '</tbody></table>';
+					html += '<div class="abitai-demo-chat__cta">' + ctaText + '</div>';
+					return html;
+				}
+
 				function answerFor(text) {
 					var normalized = normalize(text);
-					var cta = ' Contact us to discuss a demo.';
 
-					if (normalized.indexOf('abitai operator') !== -1 || normalized.indexOf('abit ai operator') !== -1) {
-						return 'AbitAI Operator helps teams run SAP & Odoo operations via chat. How it works: connect SAP/Odoo, ask in chat, get results instantly.' + cta;
+					if (normalized.indexOf('grpo') !== -1 || normalized.indexOf('goods receipt po') !== -1) {
+						return buildTable(
+							'GRPO',
+							['DocNum', 'Vendor', 'Date', 'Total'],
+							[
+								['GRPO-8801', 'Green Star Trading', '2026-01-13', '18,450'],
+								['GRPO-8802', 'Ridan Supplies', '2026-01-19', '7,220'],
+								['GRPO-8803', 'Nexa Systems', '2026-01-23', '3,980'],
+								['GRPO-8804', 'Apex Tools', '2026-01-29', '21,300']
+							]
+						);
 					}
-					if (normalized.indexOf('what is') !== -1) {
-						return 'AbitAI Operator is a desktop assistant that lets teams create, list, and update SAP/Odoo operations using plain-language chat. How it works: connect SAP/Odoo, ask in chat, get results instantly.' + cta;
+					if (normalized.indexOf('grn') !== -1 || normalized.indexOf('goods receipt') !== -1) {
+						return buildTable(
+							'GRN',
+							['DocNum', 'Vendor', 'Date', 'Total'],
+							[
+								['GRN-7801', 'Green Star Trading', '2026-01-12', '18,450'],
+								['GRN-7802', 'Ridan Supplies', '2026-01-18', '7,220'],
+								['GRN-7803', 'Nexa Systems', '2026-01-22', '3,980'],
+								['GRN-7804', 'Apex Tools', '2026-01-28', '21,300']
+							]
+						);
 					}
-					if (normalized.indexOf('how') !== -1 && normalized.indexOf('work') !== -1) {
-						return 'How it works: connect SAP/Odoo, ask in chat, and get results instantly with consistent outputs.' + cta;
+					if (normalized.indexOf('purchase order') !== -1) {
+						return buildTable(
+							'Purchase Orders',
+							['DocNum', 'Vendor', 'Date', 'Total'],
+							[
+								['230145', 'Green Star Trading', '2026-01-12', '18,450'],
+								['230146', 'Ridan Supplies', '2026-01-18', '7,220'],
+								['230147', 'Nexa Systems', '2026-01-21', '3,980'],
+								['230148', 'Apex Tools', '2026-01-28', '21,300']
+							]
+						);
 					}
-					if (normalized.indexOf('support') !== -1 || normalized.indexOf('system') !== -1) {
-						return 'AbitAI Operator supports SAP and Odoo.' + cta;
+					if (normalized.indexOf('purchase quotation') !== -1) {
+						return buildTable(
+							'Purchase Quotations',
+							['DocNum', 'Vendor', 'Date', 'Total'],
+							[
+								['44031', 'Green Star Trading', '2026-01-10', '17,900'],
+								['44032', 'Ridan Supplies', '2026-01-16', '7,050'],
+								['44033', 'Nexa Systems', '2026-01-20', '4,100'],
+								['44034', 'Apex Tools', '2026-01-26', '20,900']
+							]
+						);
 					}
-					if (normalized.indexOf('what can') !== -1 || normalized.indexOf('can it') !== -1 || normalized.indexOf('do') !== -1) {
-						return 'It can create and update sales orders, quotations, purchase orders/requests, inventory transfers, and deliver reports or exports.' + cta;
+					if (normalized.indexOf('purchase request') !== -1) {
+						return buildTable(
+							'Purchase Requests',
+							['DocNum', 'Requester', 'Date', 'Status'],
+							[
+								['PR-901', 'Ayesha', '2026-01-08', 'Open'],
+								['PR-902', 'Hasan', '2026-01-15', 'Approved'],
+								['PR-903', 'Maryam', '2026-01-23', 'Open'],
+								['PR-904', 'Saad', '2026-01-29', 'Closed']
+							]
+						);
 					}
-					if (normalized.indexOf('security') !== -1 || normalized.indexOf('privacy') !== -1) {
-						return 'Data stays within your infrastructure. Access is controlled and auditable.' + cta;
+					if (normalized.indexOf('sales order') !== -1) {
+						return buildTable(
+							'Sales Orders',
+							['DocNum', 'Customer', 'Date', 'Total'],
+							[
+								['540210', 'Maxitech', '2026-01-09', '9,840'],
+								['540211', 'River Inc', '2026-01-14', '6,220'],
+								['540212', 'Earthshaker', '2026-01-22', '14,300'],
+								['540213', 'Aquent Sys', '2026-01-30', '2,950']
+							]
+						);
 					}
-					return 'AbitAI Operator streamlines SAP & Odoo operations through plain-language chat and fast, consistent outputs.' + cta;
+					if (normalized.indexOf('sales quotation') !== -1) {
+						return buildTable(
+							'Sales Quotations',
+							['DocNum', 'Customer', 'Date', 'Total'],
+							[
+								['SQ-1201', 'Maxitech', '2026-01-06', '9,200'],
+								['SQ-1202', 'River Inc', '2026-01-13', '6,100'],
+								['SQ-1203', 'Earthshaker', '2026-01-19', '13,950'],
+								['SQ-1204', 'Aquent Sys', '2026-01-27', '2,800']
+							]
+						);
+					}
+					if (normalized.indexOf('inventory transfer') !== -1) {
+						return buildTable(
+							'Inventory Transfer Requests',
+							['DocNum', 'From', 'To', 'Date'],
+							[
+								['ITR-310', 'WH-01', 'WH-03', '2026-01-11'],
+								['ITR-311', 'WH-02', 'WH-01', '2026-01-17'],
+								['ITR-312', 'WH-03', 'WH-02', '2026-01-24'],
+								['ITR-313', 'WH-01', 'WH-04', '2026-01-31']
+							]
+						);
+					}
+					if (normalized.indexOf('customers') !== -1) {
+						return buildTable(
+							'Customers',
+							['CardCode', 'CardName', 'Phone', 'Email'],
+							[
+								['C20000', 'Maxi Teq', '02 5894 9410', 'info@maxi-teq.com'],
+								['C23900', 'Parameter Tech', '02 5894 9445', 'info@parameter.com.au'],
+								['C25000', 'Star Company', '0042 582 5633', 'info@starcomp.eu'],
+								['C26000', 'River Inc', '0044 161 869 9000', 'info@riveri.co.uk']
+							]
+						);
+					}
+					if (normalized.indexOf('items') !== -1) {
+						return buildTable(
+							'Items',
+							['ItemCode', 'ItemName', 'UoM', 'Price'],
+							[
+								['A00001', 'Motherboard MicroATX', 'Each', '320'],
+								['A00002', 'Quadcore CPU 3.4 GHz', 'Each', '480'],
+								['A00003', '1TB SSD', 'Each', '210'],
+								['A00004', '16GB RAM Kit', 'Each', '140']
+							]
+						);
+					}
+
+					if (normalized.indexOf('abitai') !== -1 || normalized.indexOf('abit ai') !== -1 || normalized.indexOf('operator') !== -1) {
+						return 'AbitAI Operator connects to SAP/Odoo so teams can run operations through chat. Ask in plain language and get instant, consistent results. ' + ctaText;
+					}
+
+					return 'AbitAI Operator handles sales, purchasing, inventory, and reporting through a secure chat-based workflow. Connect SAP/Odoo and it returns results instantly. ' + ctaText;
 				}
 
 				function handleSend(text) {
@@ -944,8 +1189,8 @@ if ( ! function_exists( 'abitai_operator_chat_widget' ) ) {
 					if (!trimmed) {
 						return;
 					}
-					appendMessage(trimmed, 'user');
-					appendMessage(answerFor(trimmed), 'bot');
+					appendMessage(trimmed, 'user', false);
+					appendMessage(answerFor(trimmed), 'bot', true);
 				}
 
 				toggle.addEventListener('click', function () {
