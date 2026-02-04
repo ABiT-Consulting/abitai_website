@@ -219,23 +219,24 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 					</div>
 					<div class="abitai-operator-hero__content">
 						<p class="abitai-operator__eyebrow">Product</p>
-						<span class="abitai-operator__tag">Enterprise-ready desktop operator</span>
+						<span class="abitai-operator__tag">Enterprise-ready SAP operator</span>
 						<h2 class="abitai-operator__title">AbitAI Operator</h2>
-						<p class="abitai-operator__subtitle">Quiet background intelligence for SAP &amp; Odoo operations.</p>
-						<p class="abitai-operator__description">A desktop assistant that lets teams create, list, and update SAP/Odoo operations using plain-language chat.</p>
+						<p class="abitai-operator__subtitle">SAP-wide operations for end-to-end SAP tasks and enterprise-wide workflows.</p>
+						<p class="abitai-operator__description">AbitAI Operator is a desktop assistant that lets teams run SAP operations through secure chat, accelerating day-to-day work without changing core systems.</p>
+						<p class="abitai-operator__description">Supports most SAP modules and workflows (Finance, Procurement, Inventory, Sales, HR, Reporting, etc.). Anything a user can do in the SAP UI, AbitAI can do via chat (permissions-based).</p>
 						<div class="abitai-operator__ctas">
 							<a class="ast-button abitai-operator__cta-primary" href="<?php echo $demo_link; ?>">Request a Demo</a>
 							<a class="ast-button abitai-operator__cta-secondary" href="<?php echo $sales_link; ?>">Contact Sales</a>
 						</div>
 						<div class="abitai-operator__panel">
-							<h3>What it does</h3>
+							<h3>Examples include</h3>
 							<ul class="abitai-operator__bullets">
-								<li>Create and update Sales Orders, Quotations, Purchase Orders/Requests</li>
-								<li>Inventory Transfer Requests, GRN/GRPO lists</li>
-								<li>Customer &amp; Item lists with export (Excel/PDF)</li>
-								<li>SQL query results (read-only reporting)</li>
-								<li>Non-technical staff can operate via chat</li>
-								<li>Fast, consistent outputs</li>
+								<li>Sales &amp; Customer Ops — sales orders, quotations, pricing updates</li>
+								<li>Procurement &amp; Vendors — purchase orders, requests, vendor updates</li>
+								<li>Inventory &amp; Logistics — transfers, GRN/GRPO, stock adjustments</li>
+								<li>Finance &amp; Accounting — invoices, postings, reconciliations</li>
+								<li>HR &amp; Admin — employee records, approvals, onboarding tasks</li>
+								<li>Reporting &amp; Analytics — operational reports, exports, quick data lookups</li>
 							</ul>
 						</div>
 					</div>
