@@ -1192,7 +1192,28 @@ if ( ! function_exists( 'abitai_elementor_update_footer_copyright_year' ) ) {
 		}
 
 		$current_year = gmdate( 'Y' );
-		$content      = preg_replace( '/\\b2022\\b/', $current_year, $content, 1 );
+		$updated      = preg_replace_callback(
+			'/(Copyright\\s*[^0-9]*)(\\d{4})(\\s*ABiT\\s*\\|\\s*Powered by ABiT Consulting \\(Pvt\\) Ltd\\.)/i',
+			static function ( $matches ) use ( $current_year ) {
+				return $matches[1] . $current_year . $matches[3];
+			},
+			$content,
+			1
+		);
+
+		// Fallback: replace the first 4-digit year that appears after the word "Copyright".
+		if ( is_string( $updated ) && $updated !== $content ) {
+			$content = $updated;
+		} else {
+			$content = preg_replace_callback(
+				'/(Copyright\\s*[^0-9]*)(\\d{4})/i',
+				static function ( $matches ) use ( $current_year ) {
+					return $matches[1] . $current_year;
+				},
+				$content,
+				1
+			);
+		}
 
 		return $content;
 	}
