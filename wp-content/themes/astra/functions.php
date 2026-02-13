@@ -1174,3 +1174,28 @@ if ( ! function_exists( 'abitai_override_footer_copyright_editor' ) ) {
 	add_filter( 'astra_get_option_footer-copyright-editor', 'abitai_override_footer_copyright_editor', 10, 3 );
 }
 
+/**
+ * Elementor footer templates store the copyright line in DB content; patch it at render-time.
+ */
+if ( ! function_exists( 'abitai_elementor_update_footer_copyright_year' ) ) {
+	function abitai_elementor_update_footer_copyright_year( $content ) {
+		if ( ! is_string( $content ) || '' === $content ) {
+			return $content;
+		}
+
+		if ( false === stripos( $content, 'Powered by ABiT Consulting (Pvt) Ltd.' ) ) {
+			return $content;
+		}
+
+		if ( false === stripos( $content, 'Copyright' ) ) {
+			return $content;
+		}
+
+		$current_year = gmdate( 'Y' );
+		$content      = preg_replace( '/\\b2022\\b/', $current_year, $content, 1 );
+
+		return $content;
+	}
+	add_filter( 'elementor/frontend/the_content', 'abitai_elementor_update_footer_copyright_year', 50 );
+}
+
