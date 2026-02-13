@@ -327,6 +327,84 @@ if ( ! function_exists( 'abitai_operator_head_marker' ) ) {
 	add_action( 'wp_head', 'abitai_operator_head_marker', 1 );
 }
 
+if ( ! function_exists( 'abitai_operator_get_seo_subjects' ) ) {
+	function abitai_operator_get_seo_subjects() {
+		return array(
+			'SAP automation',
+			'SAP AI assistant',
+			'SAP sales order automation',
+			'SAP procurement automation',
+			'SAP inventory operations',
+			'SAP finance workflow automation',
+			'enterprise workflow automation',
+			'chat-based SAP operations',
+		);
+	}
+}
+
+if ( ! function_exists( 'abitai_operator_document_title_parts' ) ) {
+	function abitai_operator_document_title_parts( $title_parts ) {
+		if ( ! abitai_operator_is_front_request() ) {
+			return $title_parts;
+		}
+
+		$title_parts['title'] = 'AbitAI Operator for SAP Automation';
+
+		if ( ! isset( $title_parts['tagline'] ) || '' === trim( (string) $title_parts['tagline'] ) ) {
+			$title_parts['tagline'] = 'Sales, Procurement, Inventory & Finance Workflows';
+		}
+
+		return $title_parts;
+	}
+	add_filter( 'document_title_parts', 'abitai_operator_document_title_parts', 20 );
+}
+
+if ( ! function_exists( 'abitai_operator_output_seo_meta' ) ) {
+	function abitai_operator_output_seo_meta() {
+		if ( ! abitai_operator_is_front_request() ) {
+			return;
+		}
+
+		$subjects     = abitai_operator_get_seo_subjects();
+		$subject_list = implode( ', ', $subjects );
+		$page_url     = home_url( '/' );
+		$site_name    = get_bloginfo( 'name' );
+		$title        = 'AbitAI Operator for SAP Automation';
+		$description  = 'AbitAI Operator helps teams run SAP tasks through secure chat across sales, procurement, inventory, finance, HR, and reporting workflows.';
+
+		$schema = array(
+			'@context'         => 'https://schema.org',
+			'@type'            => 'SoftwareApplication',
+			'name'             => 'AbitAI Operator',
+			'applicationCategory' => 'BusinessApplication',
+			'operatingSystem'  => 'Windows, macOS',
+			'url'              => esc_url_raw( $page_url . '#abitai-operator' ),
+			'description'      => $description,
+			'featureList'      => $subjects,
+			'keywords'         => $subject_list,
+			'publisher'        => array(
+				'@type' => 'Organization',
+				'name'  => $site_name,
+			),
+		);
+
+		echo "\n";
+		echo '<meta name="description" content="' . esc_attr( $description ) . '">' . "\n";
+		echo '<meta name="keywords" content="' . esc_attr( $subject_list ) . '">' . "\n";
+		echo '<link rel="canonical" href="' . esc_url( $page_url ) . '">' . "\n";
+		echo '<meta property="og:type" content="website">' . "\n";
+		echo '<meta property="og:site_name" content="' . esc_attr( $site_name ) . '">' . "\n";
+		echo '<meta property="og:title" content="' . esc_attr( $title ) . '">' . "\n";
+		echo '<meta property="og:description" content="' . esc_attr( $description ) . '">' . "\n";
+		echo '<meta property="og:url" content="' . esc_url( $page_url ) . '">' . "\n";
+		echo '<meta name="twitter:card" content="summary_large_image">' . "\n";
+		echo '<meta name="twitter:title" content="' . esc_attr( $title ) . '">' . "\n";
+		echo '<meta name="twitter:description" content="' . esc_attr( $description ) . '">' . "\n";
+		echo '<script type="application/ld+json">' . wp_json_encode( $schema ) . '</script>' . "\n";
+	}
+	add_action( 'wp_head', 'abitai_operator_output_seo_meta', 4 );
+}
+
 if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 	function abitai_operator_enqueue_styles() {
 		$css = '
@@ -1219,4 +1297,3 @@ if ( ! function_exists( 'abitai_elementor_update_footer_copyright_year' ) ) {
 	}
 	add_filter( 'elementor/frontend/the_content', 'abitai_elementor_update_footer_copyright_year', 50 );
 }
-
