@@ -1,7 +1,9 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home1/abitcons/abit.ai/
-    - /bin/mkdir -p $DEPLOYPATH/wp-content/themes/astra
-    - /bin/cp -f wp-content/themes/astra/functions.php $DEPLOYPATH/wp-content/themes/astra/functions.php
-    - /bin/cp -f web.config $DEPLOYPATH/web.config
+    - export DEPLOYPATH="${HOME}/public_html/"
+    - /bin/mkdir -p "$DEPLOYPATH"
+    - if [ -d "dist" ]; then /bin/cp -R dist/. "$DEPLOYPATH"; fi
+    - /bin/mkdir -p "$DEPLOYPATH/wp-content/themes/astra"
+    - /bin/cp -f wp-content/themes/astra/functions.php "$DEPLOYPATH/wp-content/themes/astra/functions.php"
+    - if [ -f "web.config" ]; then /bin/cp -f web.config "$DEPLOYPATH/web.config"; fi
