@@ -147,11 +147,10 @@ jobs:
 
           echo "Starting VersionControlDeployment/create..."
           create_json="$(require_ok "VersionControlDeployment/create" \
-            --data-urlencode "repository_root=${CPANEL_REPO_ROOT}" \
-            --data-urlencode "branch=${branch}")"
+            --data-urlencode "repository_root=${CPANEL_REPO_ROOT}")"
 
-          deploy_id="$(echo "$create_json" | jq -r '(.result? // .) | .data.deploy_id // empty')"
-          log_path="$(echo "$create_json" | jq -r '(.result? // .) | .data.log_path // empty')"
+          deploy_id="$(echo "$create_json" | jq -r '(.result? // .) | (.data.deploy_id // empty) | tostring')"
+          log_path="$(echo "$create_json" | jq -r '(.result? // .) | (.data.log_path // empty) | tostring')"
 
           if [ -z "$deploy_id" ]; then
             echo "::error::Missing deploy_id in create response"
@@ -170,7 +169,7 @@ jobs:
           for attempt in $(seq 1 "$max_attempts"); do
             retrieve_json="$(require_ok "VersionControlDeployment/retrieve")"
 
-            entry="$(echo "$retrieve_json" | jq -c --arg id "$deploy_id" '(.result? // .) | .data[]? | select(.deploy_id == $id) | .')"
+            entry="$(echo "$retrieve_json" | jq -c --arg id "$deploy_id" '(.result? // .) | .data[]? | select((.deploy_id | tostring) == $id) | .')"
             if [ -z "$entry" ] || [ "$entry" = "null" ]; then
               echo "Waiting for deployment to appear (${attempt}/${max_attempts})..."
               sleep "$sleep_seconds"
@@ -228,4 +227,3 @@ jobs:
 
           echo "::error::Timed out waiting for cPanel deployment to finish."
           exit 1
-
