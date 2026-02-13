@@ -322,7 +322,7 @@ if ( ! function_exists( 'abitai_operator_head_marker' ) ) {
 		if ( ! abitai_operator_is_front_request() ) {
 			return;
 		}
-		echo "\n<!-- AbitAI Operator active -->\n";
+		echo "\n<!-- AbitAI Operator active (deploy-test-20260213) -->\n";
 	}
 	add_action( 'wp_head', 'abitai_operator_head_marker', 1 );
 }
