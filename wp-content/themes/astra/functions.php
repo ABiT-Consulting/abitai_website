@@ -1150,3 +1150,27 @@ if ( ! function_exists( 'abitai_update_contact_cta_link' ) ) {
 	add_action( 'wp_footer', 'abitai_update_contact_cta_link', 120 );
 }
 
+/**
+ * Force ABiT footer copyright year to the current year (fixes old hardcoded year).
+ */
+if ( ! function_exists( 'abitai_override_footer_copyright_editor' ) ) {
+	function abitai_override_footer_copyright_editor( $value, $option, $default ) {
+		if ( ! is_string( $value ) || '' === $value ) {
+			return $value;
+		}
+
+		// Only touch our custom ABiT footer line.
+		if ( false === stripos( $value, 'Powered by ABiT Consulting' ) ) {
+			return $value;
+		}
+
+		$current_year = gmdate( 'Y' );
+
+		// Replace the old hardcoded year (e.g., 2022) with the current year (e.g., 2026).
+		$value = preg_replace( '/\\b2022\\b/', $current_year, $value, 1 );
+
+		return $value;
+	}
+	add_filter( 'astra_get_option_footer-copyright-editor', 'abitai_override_footer_copyright_editor', 10, 3 );
+}
+
