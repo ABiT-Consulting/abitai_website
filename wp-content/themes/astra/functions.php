@@ -197,7 +197,7 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 		}
 
 		$GLOBALS['abitai_operator_rendered'] = true;
-		$demo_link  = esc_url( home_url( '/#contactus' ) );
+		$demo_link  = esc_url( 'https://operator.abit.ai/' );
 		$sales_link = esc_url( home_url( '/#contactus' ) );
 
 		ob_start();
@@ -225,7 +225,7 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 						<p class="abitai-operator__description">AbitAI Operator is a desktop assistant that lets teams run SAP operations through secure chat, accelerating day-to-day work without changing core systems.</p>
 						<p class="abitai-operator__description">Supports most SAP modules and workflows (Finance, Procurement, Inventory, Sales, HR, Reporting, etc.). Anything a user can do in the SAP UI, AbitAI can do via chat (permissions-based).</p>
 						<div class="abitai-operator__ctas">
-							<a class="ast-button abitai-operator__cta-primary" href="<?php echo $demo_link; ?>">Request a Demo</a>
+							<a class="ast-button abitai-operator__cta-primary" href="<?php echo $demo_link; ?>">Apply for Demo</a>
 							<a class="ast-button abitai-operator__cta-secondary" href="<?php echo $sales_link; ?>">Contact Sales</a>
 						</div>
 						<div class="abitai-operator__panel">
