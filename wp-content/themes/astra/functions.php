@@ -231,12 +231,12 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 						<div class="abitai-operator__panel">
 							<h3>Examples include</h3>
 							<ul class="abitai-operator__bullets">
-								<li>Sales &amp; Customer Ops — sales orders, quotations, pricing updates</li>
-								<li>Procurement &amp; Vendors — purchase orders, requests, vendor updates</li>
-								<li>Inventory &amp; Logistics — transfers, GRN/GRPO, stock adjustments</li>
-								<li>Finance &amp; Accounting — invoices, postings, reconciliations</li>
-								<li>HR &amp; Admin — employee records, approvals, onboarding tasks</li>
-								<li>Reporting &amp; Analytics — operational reports, exports, quick data lookups</li>
+								<li>Sales &amp; Customer Ops - sales orders, quotations, pricing updates</li>
+								<li>Procurement &amp; Vendors - purchase orders, requests, vendor updates</li>
+								<li>Inventory &amp; Logistics - transfers, GRN/GRPO, stock adjustments</li>
+								<li>Finance &amp; Accounting - invoices, postings, reconciliations</li>
+								<li>HR &amp; Admin - employee records, approvals, onboarding tasks</li>
+								<li>Reporting &amp; Analytics - operational reports, exports, quick data lookups</li>
 							</ul>
 						</div>
 					</div>
@@ -802,30 +802,4 @@ if ( ! function_exists( 'abitai_front_page_aierp_message' ) ) {
 		<?php
 	}
 	add_action( 'astra_content_before', 'abitai_front_page_aierp_message', 5 );
-}
-
-if ( ! function_exists( 'abitai_front_page_aierp_message_styles' ) ) {
-	function abitai_front_page_aierp_message_styles() {
-		if ( ! is_front_page() ) {
-			return;
-		}
-		?>
-		<style id="abitai-front-page-aierp-message-css">
-			.abitai-front-page-aierp-message {
-				background: #ffffff;
-				padding: 32px 0 20px;
-				text-align: center;
-			}
-
-			.abitai-front-page-aierp-message h1 {
-				color: #111827;
-				font-size: clamp(2rem, 4vw, 4rem);
-				font-weight: 700;
-				line-height: 1.1;
-				margin: 0;
-			}
-		</style>
-		<?php
-	}
-	add_action( 'wp_head', 'abitai_front_page_aierp_message_styles' );
 }

@@ -2,6 +2,8 @@
 wp-config.php
 *.sql
 error_log
+*.log
+wp-content/debug.log
 
 # Uploads/cache (generated on server)
 wp-content/uploads/
