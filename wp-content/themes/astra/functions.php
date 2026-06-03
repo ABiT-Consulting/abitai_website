@@ -1379,3 +1379,48 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 	add_action( 'admin_post_nopriv_abitai_user_signup', 'abitai_handle_user_signup' );
 	add_action( 'admin_post_abitai_user_signup', 'abitai_handle_user_signup' );
 }
+
+/**
+ * Show the primary AIERP message on the main page.
+ */
+if ( ! function_exists( 'abitai_front_page_aierp_message' ) ) {
+	function abitai_front_page_aierp_message() {
+		if ( ! is_front_page() ) {
+			return;
+		}
+		?>
+		<section class="abitai-front-page-aierp-message" aria-label="<?php echo esc_attr__( 'World\'s First AIERP', 'astra' ); ?>">
+			<div class="ast-container">
+				<h1><?php echo esc_html__( 'World\'s First AIERP', 'astra' ); ?></h1>
+			</div>
+		</section>
+		<?php
+	}
+	add_action( 'astra_content_before', 'abitai_front_page_aierp_message', 5 );
+}
+
+if ( ! function_exists( 'abitai_front_page_aierp_message_styles' ) ) {
+	function abitai_front_page_aierp_message_styles() {
+		if ( ! is_front_page() ) {
+			return;
+		}
+		?>
+		<style id="abitai-front-page-aierp-message-css">
+			.abitai-front-page-aierp-message {
+				background: #ffffff;
+				padding: 32px 0 20px;
+				text-align: center;
+			}
+
+			.abitai-front-page-aierp-message h1 {
+				color: #111827;
+				font-size: clamp(2rem, 4vw, 4rem);
+				font-weight: 700;
+				line-height: 1.1;
+				margin: 0;
+			}
+		</style>
+		<?php
+	}
+	add_action( 'wp_head', 'abitai_front_page_aierp_message_styles' );
+}
