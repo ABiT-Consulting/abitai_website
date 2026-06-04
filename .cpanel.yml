@@ -8,4 +8,5 @@ deployment:
     - if [ -d "dist" ]; then /bin/cp -R dist/. "$DEPLOYPATH"; fi
     - /bin/mkdir -p "$DEPLOYPATH/wp-content/themes/astra"
     - /bin/cp -f wp-content/themes/astra/functions.php "$DEPLOYPATH/wp-content/themes/astra/functions.php"
+    - /bin/cp -f wp-content/themes/astra/front-page.php "$DEPLOYPATH/wp-content/themes/astra/front-page.php"
     - if [ -f "web.config" ]; then /bin/cp -f web.config "$DEPLOYPATH/web.config"; fi
