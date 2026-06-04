@@ -207,8 +207,42 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 				<div class="abitai-operator-hero">
 					<div class="abitai-operator-hero__media">
 						<figure class="abitai-operator__mockup abitai-operator__mockup--primary">
-							<img src="<?php echo esc_url( home_url( '/wp-content/uploads/2026/02/abitai-operator-ui.png' ) ); ?>" alt="AbitAI Operator workspace" loading="lazy" decoding="async">
-							<figcaption class="abitai-operator__mockup-caption">Live operator workspace</figcaption>
+							<div class="abitai-operator-app" role="img" aria-label="AbitAI Operator workspace with chat, image attachment, and task results">
+								<div class="abitai-operator-app__sidebar">
+									<span class="abitai-operator-app__logo">AI</span>
+									<span></span>
+									<span></span>
+									<span></span>
+								</div>
+								<div class="abitai-operator-app__main">
+									<div class="abitai-operator-app__topbar">
+										<div>
+											<strong>Sales Order Assistant</strong>
+											<small>SAP B1 connected</small>
+										</div>
+										<span class="abitai-operator-app__status">Secure</span>
+									</div>
+									<div class="abitai-operator-app__conversation">
+										<div class="abitai-operator-app__bubble abitai-operator-app__bubble--user">Create a sales order from this customer PO.</div>
+										<div class="abitai-operator-app__attachment">
+											<span class="abitai-operator-app__image-icon" aria-hidden="true"></span>
+											<div>
+												<strong>PO-image-0426.png</strong>
+												<small>Image ready for extraction</small>
+											</div>
+										</div>
+										<div class="abitai-operator-app__bubble abitai-operator-app__bubble--assistant">I found the customer, items, quantities, and delivery date. Draft order is ready for review.</div>
+									</div>
+									<div class="abitai-operator-app__composer">
+										<button type="button" class="abitai-operator-app__attach" aria-label="Attach image">
+											<span aria-hidden="true"></span>
+										</button>
+										<span class="abitai-operator-app__placeholder">Ask in chat or attach an image</span>
+										<button type="button" class="abitai-operator-app__send" aria-label="Send message">Send</button>
+									</div>
+								</div>
+							</div>
+							<figcaption class="abitai-operator__mockup-caption">Chat workspace with image attachments</figcaption>
 						</figure>
 						<div class="abitai-operator__video">
 							<button class="abitai-operator__video-trigger" type="button" aria-label="Play AbitAI Operator demo video" data-video-id="0gi6xlinoZ8" style="--video-thumb: url('https://img.youtube.com/vi/0gi6xlinoZ8/hqdefault.jpg');">
@@ -411,7 +445,7 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			'abitai-frontend',
 			ASTRA_THEME_URI . 'assets/css/abitai-frontend.css',
 			array( 'astra-theme-css' ),
-			ASTRA_THEME_VERSION
+			filemtime( ASTRA_THEME_DIR . 'assets/css/abitai-frontend.css' )
 		);
 	}
 	add_action( 'wp_enqueue_scripts', 'abitai_operator_enqueue_styles' );
