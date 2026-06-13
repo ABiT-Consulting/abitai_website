@@ -1,17 +1,37 @@
-<?php
-/**
- * Front to the WordPress application. This file doesn't do anything, but loads
- * wp-blog-header.php which does and tells WordPress to load the theme.
- *
- * @package WordPress
- */
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>worlds first ai erp</title>
+	<style>
+		:root {
+			color-scheme: light;
+			font-family: Arial, Helvetica, sans-serif;
+		}
 
-/**
- * Tells WordPress to load the WordPress theme and output it.
- *
- * @var bool
- */
-define( 'WP_USE_THEMES', true );
+		body {
+			align-items: center;
+			background: #ffffff;
+			color: #111111;
+			display: flex;
+			justify-content: center;
+			margin: 0;
+			min-height: 100vh;
+			text-align: center;
+		}
 
-/** Loads the WordPress Environment and Template */
-require __DIR__ . '/wp-blog-header.php';
+		h1 {
+			font-size: clamp(2.5rem, 8vw, 7rem);
+			font-weight: 700;
+			line-height: 1.05;
+			margin: 0;
+			max-width: 12ch;
+			text-transform: lowercase;
+		}
+	</style>
+</head>
+<body>
+	<h1>worlds first ai erp</h1>
+</body>
+</html>
