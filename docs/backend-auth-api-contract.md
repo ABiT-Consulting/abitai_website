@@ -73,9 +73,21 @@ These values appear in `GET /api/auth/me` as `onboarding.status`.
 
 Required onboarding fields used by readiness checks are `role`, `company_size`, `industry`, `primary_workflow`, and at least one `erp_module_interest` value.
 
-## Provisioning Eligibility
+## Provisioning Preflight and Eligibility
 
 Provisioning is manual/deferred for MVP, but the frontend can show request status from the API.
+
+`provisioning.preflight` exposes the required checklist that must pass before `POST /api/provisioning/request` can record a request:
+
+| Check key | Required field or condition |
+| --- | --- |
+| `company_profile` | Access request, company ID, company name, company size, and industry are present. |
+| `country` | `country_region` is present. |
+| `modules` | At least one normalized `erp_module_interest` value is present. |
+| `owner` | The access request has a linked owner user, owner name, and owner email. |
+| `consent` | Current consent evidence is present: accepted timestamp, terms version, privacy version, and latest consent audit record ID. |
+| `admin_approval` | `review_status` is `approved_for_mvp_access`. |
+| `capacity_readiness` | Provisioning capacity is enabled by `ABIT_SAAS_PROVISIONING_CAPACITY_READY`, the `abit_saas_provisioning_capacity_ready` WordPress option, or the `abit_saas_auth_provisioning_capacity_ready` filter. |
 
 `provisioning.missing_requirements` can contain:
 
@@ -84,8 +96,13 @@ Provisioning is manual/deferred for MVP, but the frontend can show request statu
 | `account_available` | Account is locked or unavailable. |
 | `access_request` | No access request record is linked to the user. |
 | `company_profile` | No company profile is linked to the access request. |
+| `country_region` | Country or region is missing from the company profile. |
 | `email_verified` | Email verification is incomplete. |
-| `required_onboarding_fields` | Required onboarding data is incomplete. |
+| `erp_module_interest` | Required ERP module interest is missing. |
+| `request_owner` | The request owner user, owner name, or owner email is missing. |
+| `consent_audit` | Consent acceptance evidence or the consent audit record link is incomplete. |
+| `admin_approval` | The access request has not been approved for MVP access. |
+| `capacity_readiness` | Operational capacity has not been marked ready for provisioning. |
 | `request_not_rejected` | Access request has been rejected. |
 
 ## Error Envelope
@@ -489,8 +506,21 @@ Mock response for review-pending user, `200`:
     "updated_at": "2026-06-14 08:35:00"
   },
   "provisioning": {
-    "eligible": true,
-    "missing_requirements": [],
+    "eligible": false,
+    "missing_requirements": ["admin_approval", "capacity_readiness"],
+    "preflight": {
+      "completed": false,
+      "missing_requirements": ["admin_approval", "capacity_readiness"],
+      "checks": [
+        { "key": "company_profile", "label": "Company profile", "passed": true },
+        { "key": "country", "label": "Country or region", "passed": true },
+        { "key": "modules", "label": "ERP modules", "passed": true },
+        { "key": "owner", "label": "Request owner", "passed": true },
+        { "key": "consent", "label": "Consent audit", "passed": true },
+        { "key": "admin_approval", "label": "Admin approval", "passed": false },
+        { "key": "capacity_readiness", "label": "Capacity readiness", "passed": false }
+      ]
+    },
     "request": null
   },
   "gate": {
@@ -515,7 +545,7 @@ Mock unauthenticated response, `401`:
 
 ## POST /api/provisioning/request
 
-Records a manual provisioning request for an eligible account, or returns the existing request if one was already recorded.
+Records a manual provisioning request for an account with a completed provisioning preflight checklist, or returns the existing request if one was already recorded.
 
 Request:
 
@@ -529,6 +559,10 @@ Created response, `201`:
 {
   "message": "Provisioning request recorded.",
   "eligible": true,
+  "preflight": {
+    "completed": true,
+    "missing_requirements": []
+  },
   "provisioning": {
     "id": 301,
     "access_request_id": 789,
@@ -540,7 +574,7 @@ Created response, `201`:
   },
   "access_request": {
     "id": 789,
-    "status": "pending_admin_review"
+    "status": "approved_for_mvp_access"
   }
 }
 ```
@@ -551,13 +585,17 @@ Mock ineligible response, `422`:
 
 ```json
 {
-  "message": "Provisioning can only be requested after email verification and required company onboarding are complete.",
+  "message": "Provisioning can only be requested after email verification, admin approval, and all required preflight checks are complete.",
   "code": "provisioning_not_allowed",
   "eligible": false,
-  "missing_requirements": ["required_onboarding_fields"],
+  "missing_requirements": ["admin_approval", "capacity_readiness"],
   "provisioning": {
     "eligible": false,
-    "missing_requirements": ["required_onboarding_fields"],
+    "missing_requirements": ["admin_approval", "capacity_readiness"],
+    "preflight": {
+      "completed": false,
+      "missing_requirements": ["admin_approval", "capacity_readiness"]
+    },
     "request": null
   }
 }
@@ -567,13 +605,17 @@ Mock unverified response, `403`:
 
 ```json
 {
-  "message": "Provisioning can only be requested after email verification and required company onboarding are complete.",
+  "message": "Provisioning can only be requested after email verification, admin approval, and all required preflight checks are complete.",
   "code": "provisioning_not_allowed",
   "eligible": false,
-  "missing_requirements": ["email_verified", "required_onboarding_fields"],
+  "missing_requirements": ["email_verified", "admin_approval", "capacity_readiness"],
   "provisioning": {
     "eligible": false,
-    "missing_requirements": ["email_verified", "required_onboarding_fields"],
+    "missing_requirements": ["email_verified", "admin_approval", "capacity_readiness"],
+    "preflight": {
+      "completed": false,
+      "missing_requirements": ["admin_approval", "capacity_readiness"]
+    },
     "request": null
   }
 }
@@ -583,13 +625,17 @@ Mock locked or rejected response, `423`:
 
 ```json
 {
-  "message": "Provisioning can only be requested after email verification and required company onboarding are complete.",
+  "message": "Provisioning can only be requested after email verification, admin approval, and all required preflight checks are complete.",
   "code": "provisioning_not_allowed",
   "eligible": false,
-  "missing_requirements": ["request_not_rejected"],
+  "missing_requirements": ["admin_approval", "capacity_readiness", "request_not_rejected"],
   "provisioning": {
     "eligible": false,
-    "missing_requirements": ["request_not_rejected"],
+    "missing_requirements": ["admin_approval", "capacity_readiness", "request_not_rejected"],
+    "preflight": {
+      "completed": false,
+      "missing_requirements": ["admin_approval", "capacity_readiness"]
+    },
     "request": null
   }
 }

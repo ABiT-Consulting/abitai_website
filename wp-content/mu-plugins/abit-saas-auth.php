@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.7';
+    private const SCHEMA_VERSION = '2026-06-14.8';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -1321,6 +1321,7 @@ final class ABiT_SaaS_Auth_API
             [
                 'message' => 'Provisioning request recorded.',
                 'eligible' => true,
+                'preflight' => $eligibility['preflight'],
                 'provisioning' => self::format_provisioning_request($provisioning_request),
                 'access_request' => [
                     'id' => (int) $access_request['id'],
@@ -1611,7 +1612,7 @@ final class ABiT_SaaS_Auth_API
 
         $access_request = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
                 $user->ID,
                 $user->user_email
             ),
@@ -2629,29 +2630,22 @@ final class ABiT_SaaS_Auth_API
         return [
             'eligible' => $eligibility['eligible'],
             'missing_requirements' => $eligibility['missing_requirements'],
+            'preflight' => $eligibility['preflight'],
             'request' => is_array($request) ? self::format_provisioning_request($request) : null,
         ];
     }
 
     private static function provisioning_eligibility(WP_User $user, ?array $access_request, array $account_state, array $onboarding): array
     {
-        $missing = [];
+        $preflight = self::provisioning_preflight_checklist($user, $access_request, $account_state, $onboarding);
+        $missing = $preflight['missing_requirements'];
 
         if ($account_state['locked']) {
             $missing[] = 'account_available';
         }
 
-        if (!is_array($access_request) || empty($access_request['id']) || empty($access_request['company_id'])) {
-            $missing[] = 'access_request';
-            $missing[] = 'company_profile';
-        }
-
         if (!$account_state['email_verified']) {
             $missing[] = 'email_verified';
-        }
-
-        if (empty($onboarding['required_fields_complete'])) {
-            $missing[] = 'required_onboarding_fields';
         }
 
         if ($account_state['review_status'] === self::REVIEW_STATUS_REJECTED) {
@@ -2665,6 +2659,7 @@ final class ABiT_SaaS_Auth_API
                 'code' => 'eligible',
                 'message' => 'Provisioning can be requested.',
                 'missing_requirements' => [],
+                'preflight' => $preflight,
                 'status' => 200,
             ];
         }
@@ -2677,10 +2672,165 @@ final class ABiT_SaaS_Auth_API
         return [
             'eligible' => false,
             'code' => 'provisioning_not_allowed',
-            'message' => 'Provisioning can only be requested after email verification and required company onboarding are complete.',
+            'message' => 'Provisioning can only be requested after email verification, admin approval, and all required preflight checks are complete.',
             'missing_requirements' => $missing,
+            'preflight' => $preflight,
             'status' => $status,
         ];
+    }
+
+    private static function provisioning_preflight_checklist(WP_User $user, ?array $access_request, array $account_state, array $onboarding): array
+    {
+        $company_name = self::first_non_empty([
+            $access_request['company_record_name'] ?? null,
+            $access_request['company_name'] ?? null,
+        ]);
+        $country_region = self::first_non_empty([
+            $access_request['company_record_country_region'] ?? null,
+            $access_request['country_region'] ?? null,
+        ]);
+        $module_interest = (array) ($onboarding['erp_module_interest'] ?? []);
+        $owner_user_id = is_array($access_request) ? (int) ($access_request['user_id'] ?? 0) : 0;
+        $owner_email = self::first_non_empty([
+            $access_request['business_email'] ?? null,
+            $user->user_email,
+        ]);
+        $owner_name = self::first_non_empty([
+            $access_request['full_name'] ?? null,
+            $user->display_name,
+        ]);
+        $consent_audit_record_id = is_array($access_request) ? (int) ($access_request['latest_consent_audit_record_id'] ?? 0) : 0;
+        $consent_ready = is_array($access_request)
+            && !empty($access_request['terms_privacy_accepted_at'])
+            && self::first_non_empty([$access_request['terms_version'] ?? null]) !== ''
+            && self::first_non_empty([$access_request['privacy_version'] ?? null]) !== ''
+            && $consent_audit_record_id > 0;
+        $capacity_ready = self::provisioning_capacity_ready($user, $access_request);
+
+        $checks = [
+            [
+                'key' => 'company_profile',
+                'label' => 'Company profile',
+                'passed' => is_array($access_request)
+                    && !empty($access_request['id'])
+                    && !empty($access_request['company_id'])
+                    && $company_name !== ''
+                    && self::first_non_empty([$onboarding['company_size'] ?? null]) !== ''
+                    && self::first_non_empty([$onboarding['industry'] ?? null]) !== '',
+                'missing_requirement' => is_array($access_request) && !empty($access_request['id']) ? 'company_profile' : 'access_request',
+            ],
+            [
+                'key' => 'country',
+                'label' => 'Country or region',
+                'passed' => $country_region !== '',
+                'missing_requirement' => 'country_region',
+            ],
+            [
+                'key' => 'modules',
+                'label' => 'ERP modules',
+                'passed' => !empty($module_interest),
+                'missing_requirement' => 'erp_module_interest',
+            ],
+            [
+                'key' => 'owner',
+                'label' => 'Request owner',
+                'passed' => $owner_user_id > 0 && $owner_email !== '' && $owner_name !== '',
+                'missing_requirement' => 'request_owner',
+            ],
+            [
+                'key' => 'consent',
+                'label' => 'Consent audit',
+                'passed' => $consent_ready,
+                'missing_requirement' => 'consent_audit',
+            ],
+            [
+                'key' => 'admin_approval',
+                'label' => 'Admin approval',
+                'passed' => $account_state['review_status'] === self::REVIEW_STATUS_APPROVED,
+                'missing_requirement' => 'admin_approval',
+            ],
+            [
+                'key' => 'capacity_readiness',
+                'label' => 'Capacity readiness',
+                'passed' => $capacity_ready,
+                'missing_requirement' => 'capacity_readiness',
+            ],
+        ];
+
+        $missing = [];
+        foreach ($checks as $check) {
+            if (empty($check['passed'])) {
+                $missing[] = (string) $check['missing_requirement'];
+            }
+        }
+
+        $checks = array_map(
+            static function (array $check): array {
+                unset($check['missing_requirement']);
+                return $check;
+            },
+            $checks
+        );
+
+        return [
+            'completed' => empty($missing),
+            'missing_requirements' => array_values(array_unique($missing)),
+            'checks' => $checks,
+            'fields' => [
+                'company_profile' => [
+                    'access_request_id' => is_array($access_request) ? (int) ($access_request['id'] ?? 0) : null,
+                    'company_id' => is_array($access_request) ? (int) ($access_request['company_id'] ?? 0) : null,
+                    'company_name' => $company_name,
+                    'company_size' => self::first_non_empty([$onboarding['company_size'] ?? null]),
+                    'industry' => self::first_non_empty([$onboarding['industry'] ?? null]),
+                ],
+                'country_region' => $country_region,
+                'erp_module_interest' => $module_interest,
+                'owner' => [
+                    'user_id' => $owner_user_id > 0 ? $owner_user_id : null,
+                    'name' => $owner_name,
+                    'email' => $owner_email,
+                ],
+                'consent' => [
+                    'accepted_at' => self::nullable_datetime($access_request['terms_privacy_accepted_at'] ?? null),
+                    'terms_version' => self::nullable_key($access_request['terms_version'] ?? null),
+                    'privacy_version' => self::nullable_key($access_request['privacy_version'] ?? null),
+                    'audit_record_id' => $consent_audit_record_id > 0 ? $consent_audit_record_id : null,
+                ],
+                'admin_approval' => [
+                    'approved' => $account_state['review_status'] === self::REVIEW_STATUS_APPROVED,
+                    'review_status' => $account_state['review_status'],
+                ],
+                'capacity_readiness' => [
+                    'ready' => $capacity_ready,
+                    'source' => self::provisioning_capacity_ready_source(),
+                ],
+            ],
+        ];
+    }
+
+    private static function provisioning_capacity_ready(WP_User $user, ?array $access_request): bool
+    {
+        $configured = self::env_value('ABIT_SAAS_PROVISIONING_CAPACITY_READY');
+        if ($configured === '') {
+            $configured = (string) get_option('abit_saas_provisioning_capacity_ready', '');
+        }
+
+        $ready = filter_var($configured, FILTER_VALIDATE_BOOLEAN);
+        return (bool) apply_filters('abit_saas_auth_provisioning_capacity_ready', $ready, $access_request, $user);
+    }
+
+    private static function provisioning_capacity_ready_source(): string
+    {
+        if (self::env_value('ABIT_SAAS_PROVISIONING_CAPACITY_READY') !== '') {
+            return 'env';
+        }
+
+        if (get_option('abit_saas_provisioning_capacity_ready', '') !== '') {
+            return 'option';
+        }
+
+        return 'default';
     }
 
     private static function provisioning_request_for_access_request(int $access_request_id): ?array
