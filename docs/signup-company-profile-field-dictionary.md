@@ -22,6 +22,7 @@ Use these owners consistently in implementation tasks:
 | --- | --- |
 | Auth API | Public signup, login, email verification, password reset, and authenticated onboarding submission endpoints. |
 | Access Request DB | Canonical record for the SaaS access request, review status, submitted signup fields, onboarding fields, and admin decisions. |
+| Consent Audit DB | Append-only legal consent evidence linked to access requests, including accepted versions, timestamp, hashed IP/user-agent, hash key version, and retention metadata. |
 | User Identity DB | Credential and identity fields required to authenticate a verified requester. |
 | Token DB | Single-use email verification and password reset tokens with expiry, consumption, and audit metadata. |
 | Admin Review API | Admin-facing read/update endpoints for approve, reject, request-more-information, and review queue filtering. |
@@ -36,7 +37,7 @@ Use these owners consistently in implementation tasks:
 | `country_region` | Country or region | Yes | Must match one configured ISO 3166 country code or approved regional routing value; store normalized code, display localized name in UI. | `access_requests.country_region` | Access Request DB / Auth API |
 | `intended_use_case` | Intended use case | Yes | Trim whitespace; 20-1000 characters; must include human-readable business context; reject spam patterns, links-only values, markup, and control characters. | `access_requests.intended_use_case` | Access Request DB / Auth API |
 | `password` | Password | Yes for credential signup | Minimum 12 characters; max 128 characters; require password strength check; reject common breached/password-list values where available; never store plaintext. | `users.password_hash` | User Identity DB / Auth API |
-| `terms_privacy_acceptance` | I accept the current terms and privacy notices | Yes before admin review | Boolean must be `true`; capture accepted terms/privacy version and timestamp; cannot be pre-checked in UI. | `access_requests.terms_privacy_accepted_at`; `access_requests.terms_privacy_version` | Access Request DB / Auth API |
+| `terms_privacy_acceptance` | I accept the current terms and privacy notices | Yes before admin review | Boolean must be `true`; cannot be pre-checked in UI; must create a consent audit record with current legal versions, server timestamp, IP hash, user-agent hash, hash key version, and retention rule. | `access_requests.terms_privacy_accepted_at`; `access_requests.terms_version`; `access_requests.privacy_version`; `access_requests.latest_consent_audit_record_id`; `consent_audit_records.*` | Access Request DB / Consent Audit DB / Auth API |
 
 ## Company Profile and Onboarding Fields
 
@@ -80,6 +81,23 @@ These fields are not directly shown as editable profile fields, but the source b
 | `password_reset_consumed_at` | Password reset completed at | Optional until consumed | Server-generated UTC timestamp set after successful password change; consumed token cannot be reused. | `password_reset_tokens.consumed_at` | Token DB / Auth API |
 | `created_at` | Created at | Yes | Server-generated UTC timestamp when signup request is accepted. | `access_requests.created_at` | Access Request DB / Auth API |
 | `updated_at` | Updated at | Yes | Server-generated UTC timestamp whenever request data or status changes. | `access_requests.updated_at` | Access Request DB / Auth API / Admin Review API |
+
+## Consent Audit Fields
+
+These fields are required by the legal consent and privacy capture requirements in `docs/legal-consent-privacy-capture-requirements.md`. They are stored in an append-only consent audit record linked to the canonical access request.
+
+| Field key | UI label | Required | Validation rule | Storage target | Database/API owner |
+| --- | --- | --- | --- | --- | --- |
+| `consent_audit_record_id` | Consent audit record | Yes before admin review | Server-generated unique ID; immutable after creation. | `consent_audit_records.id`; mirrored to `access_requests.latest_consent_audit_record_id` | Consent Audit DB / Auth API |
+| `terms_version` | Terms version accepted | Yes before admin review | Server-resolved current terms version; client-supplied version is not authoritative. | `consent_audit_records.terms_version`; mirrored to `access_requests.terms_version` | Consent Audit DB / Auth API |
+| `privacy_version` | Privacy version accepted | Yes before admin review | Server-resolved current privacy notice version; client-supplied version is not authoritative. | `consent_audit_records.privacy_version`; mirrored to `access_requests.privacy_version` | Consent Audit DB / Auth API |
+| `consent_text_version` | Consent statement version | Yes before admin review | Server-resolved version of the checkbox label or consent statement shown to the requester. | `consent_audit_records.consent_text_version` | Consent Audit DB / Auth API |
+| `legal_locale` | Legal text locale | Yes before admin review | Must be the locale used for the accepted legal text; default to the site fallback locale when only one language is available. | `consent_audit_records.legal_locale` | Consent Audit DB / Auth API |
+| `consent_accepted_at` | Consent accepted at | Yes before admin review | Server-generated UTC timestamp. | `consent_audit_records.accepted_at`; mirrored to `access_requests.terms_privacy_accepted_at` | Consent Audit DB / Auth API |
+| `ip_hash` | IP hash | Yes before admin review | Keyed hash of request IP; raw IP must not be stored in the consent audit record. | `consent_audit_records.ip_hash` | Consent Audit DB / Auth API |
+| `user_agent_hash` | User-agent hash | Yes before admin review | Keyed hash of user-agent string; raw user agent must not be stored in the consent audit record. | `consent_audit_records.user_agent_hash` | Consent Audit DB / Auth API |
+| `hash_key_version` | Hash key version | Yes before admin review | Version identifier for the secret or pepper used to hash email, IP, and user-agent evidence. | `consent_audit_records.hash_key_version` | Consent Audit DB / Auth API |
+| `consent_retention_rule` | Consent retention rule | Yes | Retain while active and for 7 years after rejection, closure, or last activity unless legal hold or counsel-approved retention changes apply. | Consent retention job/configuration; documented against `consent_audit_records` | Consent Audit DB / Auth API |
 
 ## Enumerated Values
 
@@ -143,7 +161,9 @@ These fields are not directly shown as editable profile fields, but the source b
 - Public signup should create one `access_requests` record with `review_status = pending_email_verification` and send one email verification token.
 - A verified requester who has not completed onboarding may authenticate only into the onboarding gate.
 - Onboarding completion requires `role`, `company_size`, `industry`, `primary_workflow`, `erp_module_interest`, and current terms/privacy acceptance before setting `review_status = pending_admin_review`.
+- Current terms/privacy acceptance must create an append-only consent audit record before setting `review_status = pending_admin_review`.
 - Admin review must expose full name, business email, company name, country or region, role, company size, industry, primary workflow, ERP module interest, current system, timeline, notes, verification status, and request status.
+- Admin review must expose consent accepted timestamp, accepted terms version, and accepted privacy version.
 - Admin approval does not require automated ERPNext tenant provisioning.
 
 ## Acceptance Criteria
@@ -152,3 +172,4 @@ These fields are not directly shown as editable profile fields, but the source b
 - Every field has an explicit storage target and database/API owner.
 - Required and optional field status is defined for both public signup and verified onboarding.
 - Admin review has enough normalized data to evaluate persona, company size, industry, country, ERP module interest, and request status.
+- Consent audit fields cover legal version, timestamp, IP/user-agent hash, hash key version, retention rule, and the backend audit record link required for QA.
