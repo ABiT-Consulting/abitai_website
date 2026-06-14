@@ -281,6 +281,8 @@ Purpose: confirm that the account step succeeded, explain that product access is
 | Invalid or consumed link | Error summary with resend CTA. | `This verification link cannot be used. Request a new email if you still need to verify.` |
 | Verified success | Brief success state before onboarding route. | `Email verified. Continue your access request.` |
 
+Detailed verification-required, email-sent, success, expired, failed, already-verified, and resend interaction states are defined in `docs/email-verification-resend-wireframes.md`.
+
 ## Mobile No-Scroll Acceptance Notes
 
 The wireframes are designed to avoid horizontal scroll at 320px and wider viewports:
