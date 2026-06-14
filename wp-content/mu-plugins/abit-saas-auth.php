@@ -45,11 +45,77 @@ final class ABiT_SaaS_Auth_API
         add_filter('wp_mail_from_name', [__CLASS__, 'mail_from_name']);
         add_filter('retrieve_password_title', [__CLASS__, 'password_reset_subject'], 10, 3);
         add_filter('retrieve_password_message', [__CLASS__, 'password_reset_message'], 10, 4);
+        add_filter('wp_hash_password_algorithm', [__CLASS__, 'password_hash_algorithm'], 10, 1);
+        add_filter('wp_hash_password_options', [__CLASS__, 'password_hash_options'], 10, 2);
+        add_action('validate_password_reset', [__CLASS__, 'validate_password_reset_policy'], 10, 2);
+        add_action('user_profile_update_errors', [__CLASS__, 'validate_user_profile_password_policy'], 10, 3);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
         add_action('template_redirect', [__CLASS__, 'handle_pretty_api_route'], 0);
         add_action('admin_menu', [__CLASS__, 'register_email_observability_page']);
         add_action('admin_post_abit_saas_auth_admin_decision', [__CLASS__, 'handle_admin_decision_post']);
         add_action('abit_saas_auth_email_bounced', [__CLASS__, 'record_email_bounce'], 10, 1);
+    }
+
+    public static function password_hash_algorithm($algorithm)
+    {
+        if (self::argon2id_available()) {
+            return PASSWORD_ARGON2ID;
+        }
+
+        return defined('PASSWORD_BCRYPT') ? PASSWORD_BCRYPT : $algorithm;
+    }
+
+    public static function password_hash_options(array $options, $algorithm): array
+    {
+        if (defined('PASSWORD_ARGON2ID') && $algorithm === PASSWORD_ARGON2ID) {
+            $minimum_memory_cost = defined('PASSWORD_ARGON2_DEFAULT_MEMORY_COST') ? PASSWORD_ARGON2_DEFAULT_MEMORY_COST : 65536;
+            $minimum_time_cost = defined('PASSWORD_ARGON2_DEFAULT_TIME_COST') ? max(4, PASSWORD_ARGON2_DEFAULT_TIME_COST) : 4;
+            $minimum_threads = defined('PASSWORD_ARGON2_DEFAULT_THREADS') ? PASSWORD_ARGON2_DEFAULT_THREADS : 1;
+            $options = array_merge(
+                ['memory_cost' => $minimum_memory_cost, 'time_cost' => $minimum_time_cost, 'threads' => $minimum_threads],
+                $options
+            );
+            $options['memory_cost'] = max($minimum_memory_cost, (int) $options['memory_cost']);
+            $options['time_cost'] = max($minimum_time_cost, (int) $options['time_cost']);
+            $options['threads'] = max($minimum_threads, (int) $options['threads']);
+
+            return $options;
+        }
+
+        if (defined('PASSWORD_BCRYPT') && $algorithm === PASSWORD_BCRYPT) {
+            $options = array_merge(['cost' => 12], $options);
+            $options['cost'] = max(12, (int) $options['cost']);
+
+            return $options;
+        }
+
+        return $options;
+    }
+
+    public static function validate_password_reset_policy(WP_Error $errors, WP_User $user): void
+    {
+        $password = isset($_POST['pass1']) ? (string) wp_unslash($_POST['pass1']) : '';
+        if ($password === '') {
+            return;
+        }
+
+        $password_error = self::password_error($password);
+        if ($password_error) {
+            $errors->add('abit_saas_password_policy', $password_error);
+        }
+    }
+
+    public static function validate_user_profile_password_policy(WP_Error $errors, bool $update, $user): void
+    {
+        $password = isset($_POST['pass1']) ? (string) wp_unslash($_POST['pass1']) : '';
+        if ($password === '') {
+            return;
+        }
+
+        $password_error = self::password_error($password);
+        if ($password_error) {
+            $errors->add('abit_saas_password_policy', $password_error);
+        }
     }
 
     public static function configure_transactional_mailer($phpmailer): void
@@ -2433,8 +2499,56 @@ final class ABiT_SaaS_Auth_API
     private static function audit_event(string $event_type, array $context): void
     {
         if (function_exists('abitai_auth_write_audit_log')) {
-            abitai_auth_write_audit_log($event_type, $context);
+            abitai_auth_write_audit_log($event_type, self::redact_sensitive_log_data($context));
         }
+    }
+
+    private static function redact_sensitive_log_data(array $data): array
+    {
+        $redacted = [];
+        foreach ($data as $key => $value) {
+            $key_string = (string) $key;
+            if (self::is_sensitive_log_key($key_string)) {
+                $redacted[$key] = '[redacted]';
+                continue;
+            }
+
+            if (is_array($value)) {
+                $redacted[$key] = self::redact_sensitive_log_data($value);
+                continue;
+            }
+
+            $redacted[$key] = $value;
+        }
+
+        return $redacted;
+    }
+
+    private static function is_sensitive_log_key(string $key): bool
+    {
+        $key = strtolower($key);
+        $sensitive_keys = [
+            'password',
+            'pass',
+            'pass1',
+            'pass2',
+            'pwd',
+            'user_pass',
+            'current_password',
+            'new_password',
+            'confirm_password',
+            'password_confirmation',
+            'smtp_password',
+            'secret',
+            'token',
+            'key',
+        ];
+
+        if (in_array($key, $sensitive_keys, true)) {
+            return true;
+        }
+
+        return preg_match('/(password|passwd|pwd|secret|token|reset_key|verification_key)/', $key) === 1;
     }
 
     private static function apply_admin_qualification_decision(int $access_request_id, array $payload, int $actor_user_id)
@@ -4193,19 +4307,62 @@ final class ABiT_SaaS_Auth_API
             return 'Password must include at least three character types.';
         }
 
-        $common = [
-            'password1234',
-            'password123!',
-            'qwerty123456',
-            'letmein12345',
-            'admin123456',
-            'welcome12345',
-        ];
-        if (in_array(strtolower($password), $common, true)) {
+        if (self::is_common_password($password)) {
             return 'Choose a less common password.';
         }
 
         return null;
+    }
+
+    private static function is_common_password(string $password): bool
+    {
+        $raw = strtolower(trim($password));
+        $common = [
+            '123456789012',
+            '111111111111',
+            'admin123456',
+            'administrator',
+            'abitpassword',
+            'changeme123',
+            'default1234',
+            'letmein12345',
+            'passw0rd123',
+            'password',
+            'password1',
+            'password12',
+            'password123',
+            'password1234',
+            'password12345',
+            'password123456',
+            'password123!',
+            'qwerty123456',
+            'qwertyuiop12',
+            'summer2026!',
+            'welcome123',
+            'welcome1234',
+            'welcome12345',
+            'welcome2026!',
+        ];
+
+        if (in_array($raw, $common, true)) {
+            return true;
+        }
+
+        $stripped = preg_replace('/[^a-z0-9]/', '', $raw);
+        if (in_array($stripped, $common, true)) {
+            return true;
+        }
+
+        return preg_match('/^(p[a@]ssw[o0]rd|qwerty|welcome|letmein|admin|administrator|changeme|default)[0-9!@#$%^&*._-]*$/', $raw) === 1;
+    }
+
+    private static function argon2id_available(): bool
+    {
+        if (!defined('PASSWORD_ARGON2ID') || !function_exists('password_algos')) {
+            return false;
+        }
+
+        return in_array(PASSWORD_ARGON2ID, password_algos(), true);
     }
 
     private static function duplicate_email_errors(string $email): array
@@ -4512,7 +4669,7 @@ final class ABiT_SaaS_Auth_API
     {
         self::record_email_observability_event($data);
 
-        $event_data = array_merge(
+        $event_data = self::redact_sensitive_log_data(array_merge(
             [
                 'delivery_channel' => 'email',
                 'email_delivery_provider' => self::email_delivery_provider(),
@@ -4520,7 +4677,7 @@ final class ABiT_SaaS_Auth_API
                 'logged_at' => current_time('mysql', true),
             ],
             $data
-        );
+        ));
 
         $context = [
             'actor_type' => 'system',
