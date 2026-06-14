@@ -169,6 +169,7 @@ require_once ASTRA_THEME_DIR . 'inc/core/markup/class-astra-markup.php';
 /**
  * abit.ai SaaS auth route shell.
  */
+require_once ASTRA_THEME_DIR . 'inc/abitai-auth-schema.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-routes.php';
 
 /**
