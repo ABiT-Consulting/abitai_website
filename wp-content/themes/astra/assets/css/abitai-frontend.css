@@ -1262,6 +1262,153 @@ body.aierp-front-page * {
 	gap: 12px;
 }
 
+.abit-auth-dashboard-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.abit-auth-dashboard-card {
+	display: grid;
+	align-content: start;
+	gap: 12px;
+	min-width: 0;
+	padding: 16px;
+	background: #ffffff;
+	border: 1px solid var(--auth-border);
+	border-radius: 8px;
+	box-shadow: 0 10px 24px rgba(16, 24, 40, 0.05);
+}
+
+.abit-auth-dashboard-card--profile,
+.abit-auth-dashboard-card--next {
+	grid-column: 1 / -1;
+}
+
+.abit-auth-dashboard-card__header {
+	display: grid;
+	gap: 8px;
+	align-items: start;
+}
+
+.abit-auth-dashboard-card h3 {
+	margin: 0;
+	color: var(--auth-ink);
+	font-size: 1.05rem;
+	line-height: 1.25;
+	letter-spacing: 0;
+	text-transform: none;
+}
+
+.abit-auth-dashboard-card p {
+	margin: 0;
+	color: var(--auth-muted);
+	font-size: 0.92rem;
+	line-height: 1.55;
+}
+
+.abit-auth-dashboard-muted {
+	color: #7a8799 !important;
+	font-size: 0.86rem !important;
+}
+
+.abit-auth-dashboard-list {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+	margin: 0;
+}
+
+.abit-auth-dashboard-list div {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	padding: 12px;
+	background: #f7f8fb;
+	border: 1px solid var(--auth-border);
+	border-radius: 8px;
+}
+
+.abit-auth-dashboard-list dt {
+	color: var(--auth-muted);
+	font-size: 0.78rem;
+	font-weight: 750;
+	line-height: 1.25;
+}
+
+.abit-auth-dashboard-list dd {
+	min-width: 0;
+	margin: 0;
+	color: var(--auth-ink);
+	font-size: 0.95rem;
+	font-weight: 750;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.abit-auth-dashboard-chip-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.abit-auth-dashboard-chip {
+	display: inline-flex;
+	align-items: center;
+	min-height: 30px;
+	padding: 6px 10px;
+	background: #f2f7fd;
+	border: 1px solid rgba(36, 144, 239, 0.28);
+	border-radius: 999px;
+	color: var(--auth-ink);
+	font-size: 0.82rem;
+	font-weight: 750;
+	line-height: 1.2;
+}
+
+.abit-auth-dashboard-link {
+	color: var(--auth-blue-strong);
+	font-weight: 800;
+	text-decoration: none;
+}
+
+.abit-auth-dashboard-link:hover,
+.abit-auth-dashboard-link:focus {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+.abit-auth-dashboard-steps {
+	display: grid;
+	gap: 10px;
+	padding: 0;
+	margin: 0;
+	list-style: none;
+}
+
+.abit-auth-dashboard-steps li {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr);
+	gap: 10px;
+	align-items: center;
+	min-width: 0;
+	color: var(--auth-ink);
+	font-size: 0.92rem;
+	font-weight: 750;
+	line-height: 1.35;
+}
+
+.abit-auth-dashboard-steps li.is-pending {
+	color: var(--auth-muted);
+}
+
+.abit-auth-dashboard-step-dot {
+	width: 12px;
+	height: 12px;
+	border: 2px solid;
+	border-radius: 999px;
+}
+
 .abit-auth-gate-panel {
 	display: grid;
 	gap: 10px;
@@ -2046,6 +2193,16 @@ body .elementor-element.elementor-element-04954ae > .elementor-background-overla
 	.abit-auth-module-grid,
 	.abit-auth-stepper {
 		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.abit-auth-dashboard-grid,
+	.abit-auth-dashboard-list {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.abit-auth-dashboard-card--profile,
+	.abit-auth-dashboard-card--next {
+		grid-column: auto;
 	}
 
 	.abit-auth-actions {

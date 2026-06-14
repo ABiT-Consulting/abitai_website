@@ -219,55 +219,134 @@ function abitai_auth_render_dashboard_gate_slot() {
 	);
 	$email        = isset( $request['email'] ) && '' !== $request['email'] ? $request['email'] : __( 'Signed-in account', 'astra' );
 	$company_name = isset( $request['company_name'] ) && '' !== $request['company_name'] ? $request['company_name'] : __( 'Not provided yet', 'astra' );
+	$role         = isset( $request['role'] ) && '' !== $request['role'] ? $request['role'] : __( 'Not provided yet', 'astra' );
+	$industry     = isset( $request['industry'] ) && '' !== $request['industry'] ? $request['industry'] : __( 'Not provided yet', 'astra' );
+	$company_size = isset( $request['company_size'] ) && '' !== $request['company_size'] ? $request['company_size'] : __( 'Not provided yet', 'astra' );
+	$workflow     = isset( $request['primary_workflow'] ) && '' !== $request['primary_workflow'] ? $request['primary_workflow'] : __( 'Not provided yet', 'astra' );
+	$modules      = isset( $request['selected_modules'] ) && is_array( $request['selected_modules'] ) ? array_filter( $request['selected_modules'] ) : array();
+	$next_action  = $gate['next_action'];
+	$workspace_state = $gate['provisioning_state'];
+
+	if ( false !== stripos( $next_action, 'provisioning' ) ) {
+		$next_action = ( 'approved' === $gate['onboarding_state'] ) ? __( 'Request workspace setup', 'astra' ) : __( 'Workspace setup in progress', 'astra' );
+	}
+
+	if ( false !== stripos( $workspace_state, 'provisioning' ) ) {
+		$workspace_state = __( 'In setup', 'astra' );
+	}
+
+	$support_href = add_query_arg(
+		array(
+			'subject' => 'abit.ai onboarding support',
+			'body'    => 'Please help me with my abit.ai onboarding dashboard.',
+		),
+		'mailto:support@abit.ai'
+	);
+	$steps = array(
+		array(
+			'label'    => __( 'Verify business email', 'astra' ),
+			'variant'  => 'approved',
+			'complete' => true,
+		),
+		array(
+			'label'    => __( 'Complete company profile', 'astra' ),
+			'variant'  => in_array( $gate['onboarding_state'], array( 'ready_for_review', 'approved', 'provisioning', 'provisioned', 'live' ), true ) ? 'approved' : 'pending',
+			'complete' => in_array( $gate['onboarding_state'], array( 'ready_for_review', 'approved', 'provisioning', 'provisioned', 'live' ), true ),
+		),
+		array(
+			'label'    => __( 'Team review', 'astra' ),
+			'variant'  => in_array( $gate['onboarding_state'], array( 'approved', 'provisioning', 'provisioned', 'live' ), true ) ? 'approved' : 'review',
+			'complete' => in_array( $gate['onboarding_state'], array( 'approved', 'provisioning', 'provisioned', 'live' ), true ),
+		),
+		array(
+			'label'    => __( 'Workspace activation', 'astra' ),
+			'variant'  => 'live' === $gate['onboarding_state'] && ! empty( $gate['product_access'] ) ? 'approved' : 'pending',
+			'complete' => 'live' === $gate['onboarding_state'] && ! empty( $gate['product_access'] ),
+		),
+	);
 	?>
 	<div class="abit-auth-alert abit-auth-alert--<?php echo esc_attr( $gate['alert_variant'] ); ?>" role="status" tabindex="-1" data-auth-autofocus>
 		<strong><?php echo esc_html( $gate['alert_summary'] ); ?></strong>
 		<span><?php echo esc_html( $gate['alert_body'] ); ?></span>
 	</div>
 
-	<div class="abit-auth-dashboard-summary" aria-label="<?php echo esc_attr__( 'Access request summary', 'astra' ); ?>">
-		<div class="abit-auth-status-box">
-			<span><?php esc_html_e( 'Business email', 'astra' ); ?></span>
-			<strong><?php echo esc_html( $email ); ?></strong>
-		</div>
-		<div class="abit-auth-status-box">
-			<span><?php esc_html_e( 'Company', 'astra' ); ?></span>
-			<strong><?php echo esc_html( $company_name ); ?></strong>
-		</div>
-		<div class="abit-auth-status-box">
-			<span><?php esc_html_e( 'Request status', 'astra' ); ?></span>
-			<strong><?php echo esc_html( $request['status_label'] ); ?></strong>
-		</div>
-		<div class="abit-auth-status-box">
-			<span><?php esc_html_e( 'Onboarding state', 'astra' ); ?></span>
-			<strong><?php echo esc_html( isset( $request['state_label'] ) ? $request['state_label'] : $gate['profile_state'] ); ?></strong>
-		</div>
-		<div class="abit-auth-status-box">
-			<span><?php esc_html_e( 'Allowed next action', 'astra' ); ?></span>
-			<strong><?php echo esc_html( $gate['next_action'] ); ?></strong>
-		</div>
-	</div>
-
-	<div class="abit-auth-dashboard-gate">
-		<section class="abit-auth-gate-panel">
-			<div class="abit-auth-gate-panel__heading">
+	<div class="abit-auth-dashboard-grid" aria-label="<?php echo esc_attr__( 'Onboarding dashboard', 'astra' ); ?>">
+		<section class="abit-auth-dashboard-card abit-auth-dashboard-card--profile">
+			<div class="abit-auth-dashboard-card__header">
 				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( $gate['profile_variant'] ); ?>"><?php echo esc_html( $gate['profile_state'] ); ?></span>
-				<h3><?php esc_html_e( 'Company profile status', 'astra' ); ?></h3>
+				<h3><?php esc_html_e( 'Profile', 'astra' ); ?></h3>
 			</div>
-			<p><?php echo esc_html( $gate['profile_description'] ); ?></p>
+			<dl class="abit-auth-dashboard-list">
+				<div><dt><?php esc_html_e( 'Company', 'astra' ); ?></dt><dd><?php echo esc_html( $company_name ); ?></dd></div>
+				<div><dt><?php esc_html_e( 'Contact', 'astra' ); ?></dt><dd><?php echo esc_html( $email ); ?></dd></div>
+				<div><dt><?php esc_html_e( 'Role', 'astra' ); ?></dt><dd><?php echo esc_html( $role ); ?></dd></div>
+				<div><dt><?php esc_html_e( 'Industry', 'astra' ); ?></dt><dd><?php echo esc_html( $industry ); ?></dd></div>
+				<div><dt><?php esc_html_e( 'Company size', 'astra' ); ?></dt><dd><?php echo esc_html( $company_size ); ?></dd></div>
+			</dl>
 		</section>
 
-		<section class="abit-auth-gate-panel">
-			<div class="abit-auth-gate-panel__heading">
-				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( $gate['provisioning_variant'] ); ?>"><?php echo esc_html( $gate['provisioning_state'] ); ?></span>
-				<h3><?php esc_html_e( 'Provisioning status', 'astra' ); ?></h3>
+		<section class="abit-auth-dashboard-card">
+			<div class="abit-auth-dashboard-card__header">
+				<span class="abit-auth-status-badge abit-auth-status-badge--approved"><?php esc_html_e( 'Verified', 'astra' ); ?></span>
+				<h3><?php esc_html_e( 'Verification', 'astra' ); ?></h3>
+			</div>
+			<p><?php esc_html_e( 'Your business email is confirmed for this access request.', 'astra' ); ?></p>
+			<p class="abit-auth-dashboard-muted"><?php esc_html_e( 'Security checks stay in place when you return to the dashboard.', 'astra' ); ?></p>
+		</section>
+
+		<section class="abit-auth-dashboard-card">
+			<div class="abit-auth-dashboard-card__header">
+				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( empty( $modules ) ? 'pending' : 'approved' ); ?>"><?php echo esc_html( empty( $modules ) ? __( 'Needed', 'astra' ) : __( 'Selected', 'astra' ) ); ?></span>
+				<h3><?php esc_html_e( 'Selected modules', 'astra' ); ?></h3>
+			</div>
+			<?php if ( empty( $modules ) ) : ?>
+				<p><?php esc_html_e( 'Choose the ERP areas your team wants to evaluate so onboarding can be tailored.', 'astra' ); ?></p>
+			<?php else : ?>
+				<div class="abit-auth-dashboard-chip-row">
+					<?php foreach ( $modules as $module_label ) : ?>
+						<span class="abit-auth-dashboard-chip"><?php echo esc_html( $module_label ); ?></span>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+			<p class="abit-auth-dashboard-muted"><?php echo esc_html( $workflow ); ?></p>
+		</section>
+
+		<section class="abit-auth-dashboard-card">
+			<div class="abit-auth-dashboard-card__header">
+				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( $gate['provisioning_variant'] ); ?>"><?php echo esc_html( $workspace_state ); ?></span>
+				<h3><?php esc_html_e( 'Workspace status', 'astra' ); ?></h3>
 			</div>
 			<p><?php echo esc_html( $gate['provisioning_description'] ); ?></p>
+			<p class="abit-auth-dashboard-muted"><?php esc_html_e( 'Only customer-facing readiness is shown here.', 'astra' ); ?></p>
+		</section>
+
+		<section class="abit-auth-dashboard-card">
+			<div class="abit-auth-dashboard-card__header">
+				<span class="abit-auth-status-badge abit-auth-status-badge--pending"><?php esc_html_e( 'Available', 'astra' ); ?></span>
+				<h3><?php esc_html_e( 'Support', 'astra' ); ?></h3>
+			</div>
+			<p><?php esc_html_e( 'Need to correct company details or ask about review timing? The support team can help.', 'astra' ); ?></p>
+			<a class="abit-auth-dashboard-link" href="<?php echo esc_url( $support_href ); ?>"><?php esc_html_e( 'Contact support', 'astra' ); ?></a>
+		</section>
+
+		<section class="abit-auth-dashboard-card abit-auth-dashboard-card--next">
+			<div class="abit-auth-dashboard-card__header">
+				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( $gate['alert_variant'] === 'success' ? 'approved' : ( 'error' === $gate['alert_variant'] ? 'rejected' : 'review' ) ); ?>"><?php esc_html_e( 'Next', 'astra' ); ?></span>
+				<h3><?php esc_html_e( 'Next steps', 'astra' ); ?></h3>
+			</div>
+			<ol class="abit-auth-dashboard-steps">
+				<?php foreach ( $steps as $step ) : ?>
+					<li class="<?php echo esc_attr( $step['complete'] ? 'is-complete' : 'is-pending' ); ?>">
+						<span class="abit-auth-dashboard-step-dot abit-auth-status-badge--<?php echo esc_attr( $step['variant'] ); ?>" aria-hidden="true"></span>
+						<span><?php echo esc_html( $step['label'] ); ?></span>
+					</li>
+				<?php endforeach; ?>
+			</ol>
 		</section>
 	</div>
 
 	<div class="abit-auth-actions">
-		<a class="abit-auth-button abit-auth-button--<?php echo esc_attr( 'secondary' === $gate['next_variant'] ? 'secondary' : 'primary' ); ?>" href="<?php echo esc_url( $gate['next_href'] ); ?>"><?php echo esc_html( $gate['next_action'] ); ?></a>
+		<a class="abit-auth-button abit-auth-button--<?php echo esc_attr( 'secondary' === $gate['next_variant'] ? 'secondary' : 'primary' ); ?>" href="<?php echo esc_url( $gate['next_href'] ); ?>"><?php echo esc_html( $next_action ); ?></a>
 		<a class="abit-auth-button abit-auth-button--secondary" href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>"><?php esc_html_e( 'Back to sign in', 'astra' ); ?></a>
 	</div>
 	<?php

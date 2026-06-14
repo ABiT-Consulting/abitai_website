@@ -858,6 +858,36 @@ if ( ! function_exists( 'abitai_get_erp_module_interest_options' ) ) {
 	}
 }
 
+if ( ! function_exists( 'abitai_get_erp_module_interest_label' ) ) {
+	/**
+	 * Return a customer-facing label for stored ERP module interest keys.
+	 *
+	 * @param string $module Module key.
+	 * @return string
+	 */
+	function abitai_get_erp_module_interest_label( $module ) {
+		$labels = array_merge(
+			abitai_get_erp_module_interest_options(),
+			array(
+				'accounting'           => __( 'Finance', 'astra' ),
+				'buying'               => __( 'Purchasing', 'astra' ),
+				'stock'                => __( 'Inventory', 'astra' ),
+				'hr_payroll'           => __( 'HR and payroll', 'astra' ),
+				'support_helpdesk'     => __( 'Support', 'astra' ),
+				'website_portal'       => __( 'Customer portal', 'astra' ),
+				'reports_analytics'    => __( 'Reporting', 'astra' ),
+				'integrations'         => __( 'Integrations', 'astra' ),
+				'full_erp_evaluation'  => __( 'Full ERP evaluation', 'astra' ),
+				'not_sure'             => __( 'Not sure yet', 'astra' ),
+			)
+		);
+
+		$module = sanitize_key( (string) $module );
+
+		return isset( $labels[ $module ] ) ? $labels[ $module ] : ucwords( str_replace( '_', ' ', $module ) );
+	}
+}
+
 if ( ! function_exists( 'abitai_text_has_unsafe_content' ) ) {
 	function abitai_text_has_unsafe_content( $value ) {
 		return preg_match( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F<>]/', $value ) || preg_match( '/https?:\/\/|www\./i', $value );
@@ -1299,12 +1329,35 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 		}
 
 		$company_name          = isset( $_GET['company_name'] ) ? sanitize_text_field( wp_unslash( $_GET['company_name'] ) ) : '';
+		$role                  = isset( $_GET['role'] ) ? sanitize_text_field( wp_unslash( $_GET['role'] ) ) : '';
+		$industry              = isset( $_GET['industry'] ) ? sanitize_key( wp_unslash( $_GET['industry'] ) ) : '';
+		$company_size          = isset( $_GET['company_size'] ) ? sanitize_key( wp_unslash( $_GET['company_size'] ) ) : '';
+		$primary_workflow      = isset( $_GET['primary_workflow'] ) ? sanitize_text_field( wp_unslash( $_GET['primary_workflow'] ) ) : '';
+		$selected_modules      = array();
 		$product_access       = ( 'live' === $status && ! is_user_logged_in() );
 		$missing_requirements = array();
 		$gate_checks          = array();
 
-		if ( '' === $company_name && is_user_logged_in() ) {
-			$company_name = sanitize_text_field( (string) get_user_meta( get_current_user_id(), 'abitai_company_name', true ) );
+		if ( isset( $_GET['erp_module_interest'] ) ) {
+			$raw_modules = wp_unslash( $_GET['erp_module_interest'] );
+			$raw_modules = is_array( $raw_modules ) ? $raw_modules : explode( ',', (string) $raw_modules );
+			$selected_modules = array_values( array_unique( array_filter( array_map( 'sanitize_key', $raw_modules ) ) ) );
+		}
+
+		if ( is_user_logged_in() ) {
+			$user_id = get_current_user_id();
+
+			$company_name = '' !== $company_name ? $company_name : sanitize_text_field( (string) get_user_meta( $user_id, 'abitai_company_name', true ) );
+			$role         = '' !== $role ? $role : sanitize_text_field( (string) get_user_meta( $user_id, 'abitai_role', true ) );
+			$industry     = '' !== $industry ? $industry : sanitize_key( (string) get_user_meta( $user_id, 'abitai_industry', true ) );
+			$company_size = '' !== $company_size ? $company_size : sanitize_key( (string) get_user_meta( $user_id, 'abitai_company_size', true ) );
+			$primary_workflow = '' !== $primary_workflow ? $primary_workflow : sanitize_text_field( (string) get_user_meta( $user_id, 'abitai_business_description', true ) );
+
+			if ( empty( $selected_modules ) ) {
+				$stored_modules = get_user_meta( $user_id, 'abitai_erp_module_interest', true );
+				$stored_modules = is_array( $stored_modules ) ? $stored_modules : explode( ',', (string) $stored_modules );
+				$selected_modules = array_values( array_unique( array_filter( array_map( 'sanitize_key', $stored_modules ) ) ) );
+			}
 		}
 
 		if ( is_user_logged_in() && function_exists( 'abitai_erp_access_gate_get_user_context' ) && function_exists( 'abitai_erp_access_gate_evaluate' ) ) {
@@ -1324,6 +1377,14 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 			}
 		}
 
+		$industry_options     = function_exists( 'abitai_get_industry_options' ) ? abitai_get_industry_options() : array();
+		$company_size_options = function_exists( 'abitai_get_company_size_options' ) ? abitai_get_company_size_options() : array();
+		$module_labels        = array();
+
+		foreach ( $selected_modules as $module ) {
+			$module_labels[] = abitai_get_erp_module_interest_label( $module );
+		}
+
 		$onboarding_state = ( 'pending_email_verification' === $status ) ? 'blocked' : abitai_normalize_onboarding_state( $status );
 
 		return array(
@@ -1333,6 +1394,11 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 			'state_label'          => $statuses[ $onboarding_state ],
 			'email'                => $email,
 			'company_name'         => $company_name,
+			'role'                 => $role,
+			'industry'             => isset( $industry_options[ $industry ] ) ? $industry_options[ $industry ] : '',
+			'company_size'         => isset( $company_size_options[ $company_size ] ) ? $company_size_options[ $company_size ] : '',
+			'primary_workflow'     => $primary_workflow,
+			'selected_modules'     => $module_labels,
 			'product_access'       => $product_access,
 			'missing_requirements' => $missing_requirements,
 			'gate_checks'          => $gate_checks,
@@ -1471,10 +1537,10 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_gate' ) ) {
 		if ( 'live' === $state && empty( $gate['product_access'] ) ) {
 			$gate['profile_state']       = __( 'Approved', 'astra' );
 			$gate['profile_variant']     = 'approved';
-			$gate['profile_description'] = __( 'The access request is approved, but ERP access is still waiting on required gate checks.', 'astra' );
+			$gate['profile_description'] = __( 'The access request is approved, but workspace access is still waiting on final readiness checks.', 'astra' );
 			$gate['provisioning_state']  = __( 'Blocked', 'astra' );
 			$gate['provisioning_variant'] = 'rejected';
-			$gate['provisioning_description'] = __( 'Full ERP access requires email verification, complete onboarding, an active workspace role, an active tenant, and an ERP entitlement.', 'astra' );
+			$gate['provisioning_description'] = __( 'Workspace access requires verified account details, complete onboarding, and final activation by the abit.ai team.', 'astra' );
 			$gate['next_action']         = __( 'View access status', 'astra' );
 			$gate['next_href']           = home_url( '/dashboard' );
 			$gate['next_variant']        = 'secondary';
