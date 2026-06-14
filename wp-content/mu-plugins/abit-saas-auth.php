@@ -48,6 +48,16 @@ final class ABiT_SaaS_Auth_API
                 'permission_callback' => '__return_true',
             ]
         );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            '/auth/logout',
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'logout'],
+                'permission_callback' => '__return_true',
+            ]
+        );
     }
 
     public static function handle_pretty_api_route(): void
@@ -62,6 +72,10 @@ final class ABiT_SaaS_Auth_API
             '/api/auth/login' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/login',
                 'callback' => [__CLASS__, 'login'],
+            ],
+            '/api/auth/logout' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/auth/logout',
+                'callback' => [__CLASS__, 'logout'],
             ],
         ];
 
@@ -312,6 +326,39 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
+    public static function logout(WP_REST_Request $request): WP_REST_Response
+    {
+        $user_id = self::current_authenticated_user_id();
+        $session_token = wp_get_session_token();
+
+        if ($user_id <= 0 || $session_token === '') {
+            wp_clear_auth_cookie();
+            wp_set_current_user(0);
+
+            return new WP_REST_Response(
+                [
+                    'message' => 'No active session to sign out.',
+                    'authenticated' => false,
+                    'revoked' => false,
+                ],
+                401
+            );
+        }
+
+        WP_Session_Tokens::get_instance($user_id)->destroy($session_token);
+        wp_clear_auth_cookie();
+        wp_set_current_user(0);
+
+        return new WP_REST_Response(
+            [
+                'message' => 'Signed out.',
+                'authenticated' => false,
+                'revoked' => true,
+            ],
+            200
+        );
+    }
+
     private static function request_payload(WP_REST_Request $request): array
     {
         $params = $request->get_json_params();
@@ -404,6 +451,22 @@ final class ABiT_SaaS_Auth_API
             ],
             401
         );
+    }
+
+    private static function current_authenticated_user_id(): int
+    {
+        $user_id = get_current_user_id();
+        if ($user_id > 0) {
+            return (int) $user_id;
+        }
+
+        $cookie_user_id = wp_validate_auth_cookie('', 'logged_in');
+        if ($cookie_user_id) {
+            return (int) $cookie_user_id;
+        }
+
+        $cookie_user_id = wp_validate_auth_cookie('', 'auth');
+        return $cookie_user_id ? (int) $cookie_user_id : 0;
     }
 
     private static function account_state_for_user(WP_User $user): array
