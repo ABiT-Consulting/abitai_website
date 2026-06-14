@@ -403,6 +403,31 @@ Mock response for review-pending user, `200`:
     "industry": "trading_distribution",
     "status": "draft"
   },
+  "workspace": {
+    "created": true,
+    "status": "active",
+    "hold_reason": null,
+    "workspace": {
+      "id": 601,
+      "company_id": 456,
+      "key": "abit-trading-llc-456",
+      "display_name": "ABiT Trading LLC",
+      "status": "active",
+      "created_by_user_id": 123,
+      "created_at": "2026-06-14 08:30:00",
+      "updated_at": "2026-06-14 08:30:00"
+    },
+    "membership": {
+      "id": 701,
+      "workspace_id": 601,
+      "company_id": 456,
+      "user_id": 123,
+      "access_request_id": 789,
+      "role": "owner",
+      "status": "active",
+      "joined_at": "2026-06-14 08:30:00"
+    }
+  },
   "role": "Operations Manager",
   "onboarding": {
     "status": "submitted_for_review",

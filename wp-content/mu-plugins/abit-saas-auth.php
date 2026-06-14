@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.5';
+    private const SCHEMA_VERSION = '2026-06-14.6';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -20,6 +20,10 @@ final class ABiT_SaaS_Auth_API
     private const REVIEW_STATUS_REJECTED = 'rejected';
     private const REVIEW_STATUS_MORE_INFORMATION_REQUESTED = 'more_information_requested';
     private const PROVISIONING_STATUS_REQUESTED = 'requested';
+    private const WORKSPACE_STATUS_ACTIVE = 'active';
+    private const WORKSPACE_MEMBER_STATUS_ACTIVE = 'active';
+    private const WORKSPACE_MEMBER_ROLE_OWNER = 'owner';
+    private const WORKSPACE_MEMBER_ROLE_MEMBER = 'member';
     private const CONSENT_RETENTION_RULE = 'active_plus_7_years_after_closure';
 
     public static function bootstrap(): void
@@ -375,6 +379,8 @@ final class ABiT_SaaS_Auth_API
         $tokens = self::table('email_verification_tokens');
         $email_events = self::table('email_delivery_events');
         $provisioning_requests = self::table('provisioning_requests');
+        $workspaces = self::table('workspaces');
+        $workspace_memberships = self::table('workspace_memberships');
 
         dbDelta("
             CREATE TABLE {$companies} (
@@ -526,6 +532,46 @@ final class ABiT_SaaS_Auth_API
                 KEY user_id (user_id),
                 KEY company_id (company_id),
                 KEY request_status (request_status)
+            ) {$charset_collate};
+        ");
+
+        dbDelta("
+            CREATE TABLE {$workspaces} (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                company_id BIGINT UNSIGNED NOT NULL,
+                workspace_key VARCHAR(96) NOT NULL,
+                display_name VARCHAR(160) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                created_by_user_id BIGINT UNSIGNED NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY  (id),
+                UNIQUE KEY company_id (company_id),
+                UNIQUE KEY workspace_key (workspace_key),
+                KEY status (status),
+                KEY created_by_user_id (created_by_user_id)
+            ) {$charset_collate};
+        ");
+
+        dbDelta("
+            CREATE TABLE {$workspace_memberships} (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                workspace_id BIGINT UNSIGNED NOT NULL,
+                company_id BIGINT UNSIGNED NOT NULL,
+                user_id BIGINT UNSIGNED NOT NULL,
+                access_request_id BIGINT UNSIGNED NOT NULL,
+                role VARCHAR(32) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                joined_at DATETIME NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY  (id),
+                UNIQUE KEY workspace_user (workspace_id, user_id),
+                KEY company_id (company_id),
+                KEY user_id (user_id),
+                KEY access_request_id (access_request_id),
+                KEY role (role),
+                KEY status (status)
             ) {$charset_collate};
         ");
 
@@ -814,7 +860,7 @@ final class ABiT_SaaS_Auth_API
 
             $access_request = $wpdb->get_row(
                 $wpdb->prepare(
-                    'SELECT id, user_id, company_id, business_email, review_status, email_verified_at FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1 FOR UPDATE',
+                    'SELECT id, user_id, company_id, business_email, company_name, review_status, email_verified_at FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1 FOR UPDATE',
                     (int) $token_row['access_request_id']
                 ),
                 ARRAY_A
@@ -833,13 +879,14 @@ final class ABiT_SaaS_Auth_API
                 if (empty($token_row['consumed_at'])) {
                     self::consume_verification_token((int) $token_row['id'], $now);
                 }
+                $workspace_result = self::ensure_workspace_for_verified_access_request($access_request, $now);
                 $wpdb->query('COMMIT');
 
                 return self::verification_response(
                     'already_verified',
                     'Email already verified.',
                     200,
-                    $access_request,
+                    array_merge($access_request, ['workspace' => $workspace_result]),
                     $token_row
                 );
             }
@@ -881,6 +928,7 @@ final class ABiT_SaaS_Auth_API
 
             self::consume_verification_token((int) $token_row['id'], $now);
             self::mark_access_request_verified($access_request, $now);
+            $workspace_result = self::ensure_workspace_for_verified_access_request($access_request, $now);
 
             $wpdb->query('COMMIT');
 
@@ -899,6 +947,9 @@ final class ABiT_SaaS_Auth_API
                         'review_status' => self::REVIEW_STATUS_ONBOARDING_REQUIRED,
                         'verification_age_seconds' => max(0, time() - strtotime((string) $token_row['created_at'])),
                         'verification_attempt_result' => 'success',
+                        'workspace_status' => $workspace_result['status'],
+                        'workspace_role' => $workspace_result['membership']['role'] ?? null,
+                        'workspace_hold_reason' => $workspace_result['hold_reason'] ?? null,
                     ],
                 ]
             );
@@ -907,7 +958,7 @@ final class ABiT_SaaS_Auth_API
                 'verified',
                 'Email verified.',
                 200,
-                array_merge($access_request, ['review_status' => self::REVIEW_STATUS_ONBOARDING_REQUIRED, 'email_verified_at' => $now]),
+                array_merge($access_request, ['review_status' => self::REVIEW_STATUS_ONBOARDING_REQUIRED, 'email_verified_at' => $now, 'workspace' => $workspace_result]),
                 array_merge($token_row, ['consumed_at' => $now])
             );
         } catch (Throwable $exception) {
@@ -1149,6 +1200,7 @@ final class ABiT_SaaS_Auth_API
         $account_state = self::account_state_from_access_request($user, $access_request);
         $onboarding = self::onboarding_payload($user, $access_request, $account_state);
         $provisioning = self::provisioning_payload($user, $access_request, $account_state, $onboarding);
+        $workspace = self::workspace_payload($user, $access_request);
 
         return new WP_REST_Response(
             [
@@ -1161,6 +1213,7 @@ final class ABiT_SaaS_Auth_API
                     'delivery' => self::email_observability_payload($access_request),
                 ],
                 'company' => self::company_payload($user, $access_request),
+                'workspace' => $workspace,
                 'role' => $onboarding['role'],
                 'onboarding' => $onboarding,
                 'access_request' => [
@@ -1402,6 +1455,10 @@ final class ABiT_SaaS_Auth_API
                 'expires_at' => self::nullable_datetime($token_row['expires_at'] ?? null),
                 'consumed_at' => self::nullable_datetime($token_row['consumed_at'] ?? null),
             ];
+        }
+
+        if (is_array($access_request) && isset($access_request['workspace']) && is_array($access_request['workspace'])) {
+            $payload['workspace'] = $access_request['workspace'];
         }
 
         return new WP_REST_Response($payload, $status);
@@ -1824,6 +1881,272 @@ final class ABiT_SaaS_Auth_API
     {
         $value = strtolower(trim((string) $value));
         return preg_match('/^[a-f0-9]{64}$/', $value) ? $value : null;
+    }
+
+    private static function workspace_payload(WP_User $user, ?array $access_request): array
+    {
+        if (!is_array($access_request) || empty($access_request['company_id'])) {
+            return [
+                'created' => false,
+                'status' => 'not_available',
+                'hold_reason' => 'missing_company_profile',
+                'workspace' => null,
+                'membership' => null,
+            ];
+        }
+
+        $hold_reason = self::workspace_hold_reason($access_request);
+        $workspace = self::workspace_for_company((int) $access_request['company_id']);
+        $membership = is_array($workspace) ? self::workspace_membership_for_user((int) $workspace['id'], (int) $user->ID) : null;
+
+        return [
+            'created' => is_array($workspace),
+            'status' => is_array($workspace) ? (string) $workspace['status'] : ($hold_reason === null ? 'not_created' : 'held'),
+            'hold_reason' => $hold_reason,
+            'workspace' => is_array($workspace) ? self::format_workspace($workspace) : null,
+            'membership' => is_array($membership) ? self::format_workspace_membership($membership) : null,
+        ];
+    }
+
+    private static function ensure_workspace_for_verified_access_request(array $access_request, string $now): array
+    {
+        $hold_reason = self::workspace_hold_reason($access_request);
+        if ($hold_reason !== null) {
+            self::audit_event(
+                'auth_workspace_creation_held',
+                [
+                    'actor_user_id' => (int) $access_request['user_id'],
+                    'actor_type' => 'system',
+                    'entity_type' => 'company',
+                    'entity_id' => (int) $access_request['company_id'],
+                    'access_request_id' => (int) $access_request['id'],
+                    'company_id' => (int) $access_request['company_id'],
+                    'event_data' => [
+                        'hold_reason' => $hold_reason,
+                    ],
+                ]
+            );
+
+            return [
+                'created' => false,
+                'status' => 'held',
+                'hold_reason' => $hold_reason,
+                'workspace' => null,
+                'membership' => null,
+            ];
+        }
+
+        $workspace = self::ensure_company_workspace($access_request, $now);
+        $membership = self::ensure_workspace_membership($workspace, $access_request, $now);
+
+        self::audit_event(
+            'auth_workspace_membership_ready',
+            [
+                'actor_user_id' => (int) $access_request['user_id'],
+                'actor_type' => 'system',
+                'entity_type' => 'workspace_membership',
+                'entity_id' => (int) $membership['id'],
+                'access_request_id' => (int) $access_request['id'],
+                'company_id' => (int) $access_request['company_id'],
+                'event_data' => [
+                    'workspace_id' => (int) $workspace['id'],
+                    'membership_role' => (string) $membership['role'],
+                    'workspace_created' => !empty($workspace['_created']),
+                    'membership_created' => !empty($membership['_created']),
+                ],
+            ]
+        );
+
+        return [
+            'created' => true,
+            'status' => (string) $workspace['status'],
+            'hold_reason' => null,
+            'workspace' => self::format_workspace($workspace),
+            'membership' => self::format_workspace_membership($membership),
+        ];
+    }
+
+    private static function workspace_hold_reason(array $access_request): ?string
+    {
+        $user = get_userdata((int) $access_request['user_id']);
+        if ($user instanceof WP_User && (int) $user->user_status !== 0) {
+            return 'account_locked';
+        }
+
+        $hold_meta_keys = [
+            'abit_saas_risk_hold' => 'risk_hold',
+            'abit_saas_admin_hold' => 'admin_hold',
+            'abit_saas_security_hold' => 'security_hold',
+            'abit_saas_account_locked' => 'account_locked',
+            'account_locked' => 'account_locked',
+        ];
+
+        foreach ($hold_meta_keys as $key => $reason) {
+            $value = get_user_meta((int) $access_request['user_id'], $key, true);
+            if (true === filter_var($value, FILTER_VALIDATE_BOOLEAN)) {
+                return $reason;
+            }
+        }
+
+        $filtered = apply_filters('abit_saas_auth_workspace_hold_reason', null, $access_request, $user);
+        if (is_string($filtered) && $filtered !== '') {
+            return sanitize_key($filtered);
+        }
+
+        return null;
+    }
+
+    private static function workspace_for_company(int $company_id): ?array
+    {
+        global $wpdb;
+
+        $workspace = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT id, company_id, workspace_key, display_name, status, created_by_user_id, created_at, updated_at FROM ' . self::table('workspaces') . ' WHERE company_id = %d LIMIT 1',
+                $company_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array($workspace) ? $workspace : null;
+    }
+
+    private static function workspace_membership_for_user(int $workspace_id, int $user_id): ?array
+    {
+        global $wpdb;
+
+        $membership = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT id, workspace_id, company_id, user_id, access_request_id, role, status, joined_at, created_at, updated_at FROM ' . self::table('workspace_memberships') . ' WHERE workspace_id = %d AND user_id = %d LIMIT 1',
+                $workspace_id,
+                $user_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array($membership) ? $membership : null;
+    }
+
+    private static function ensure_company_workspace(array $access_request, string $now): array
+    {
+        $existing = self::workspace_for_company((int) $access_request['company_id']);
+        if (is_array($existing)) {
+            $existing['_created'] = false;
+            return $existing;
+        }
+
+        global $wpdb;
+        $workspace_key = self::unique_workspace_key((int) $access_request['company_id'], (string) $access_request['company_name']);
+        $inserted = $wpdb->insert(
+            self::table('workspaces'),
+            [
+                'company_id' => (int) $access_request['company_id'],
+                'workspace_key' => $workspace_key,
+                'display_name' => (string) $access_request['company_name'],
+                'status' => self::WORKSPACE_STATUS_ACTIVE,
+                'created_by_user_id' => (int) $access_request['user_id'],
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            ['%d', '%s', '%s', '%s', '%d', '%s', '%s']
+        );
+
+        if (false === $inserted || empty($wpdb->insert_id)) {
+            throw new RuntimeException('Workspace could not be created.');
+        }
+
+        $created = self::workspace_for_company((int) $access_request['company_id']);
+        if (!is_array($created)) {
+            throw new RuntimeException('Workspace could not be loaded.');
+        }
+
+        $created['_created'] = true;
+        return $created;
+    }
+
+    private static function ensure_workspace_membership(array $workspace, array $access_request, string $now): array
+    {
+        $existing = self::workspace_membership_for_user((int) $workspace['id'], (int) $access_request['user_id']);
+        if (is_array($existing)) {
+            $existing['_created'] = false;
+            return $existing;
+        }
+
+        global $wpdb;
+        $active_members_count = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT COUNT(*) FROM ' . self::table('workspace_memberships') . ' WHERE workspace_id = %d AND status = %s',
+                (int) $workspace['id'],
+                self::WORKSPACE_MEMBER_STATUS_ACTIVE
+            )
+        );
+        $role = $active_members_count === 0 ? self::WORKSPACE_MEMBER_ROLE_OWNER : self::WORKSPACE_MEMBER_ROLE_MEMBER;
+
+        $inserted = $wpdb->insert(
+            self::table('workspace_memberships'),
+            [
+                'workspace_id' => (int) $workspace['id'],
+                'company_id' => (int) $access_request['company_id'],
+                'user_id' => (int) $access_request['user_id'],
+                'access_request_id' => (int) $access_request['id'],
+                'role' => $role,
+                'status' => self::WORKSPACE_MEMBER_STATUS_ACTIVE,
+                'joined_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            ['%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s']
+        );
+
+        if (false === $inserted || empty($wpdb->insert_id)) {
+            throw new RuntimeException('Workspace membership could not be created.');
+        }
+
+        $created = self::workspace_membership_for_user((int) $workspace['id'], (int) $access_request['user_id']);
+        if (!is_array($created)) {
+            throw new RuntimeException('Workspace membership could not be loaded.');
+        }
+
+        $created['_created'] = true;
+        return $created;
+    }
+
+    private static function unique_workspace_key(int $company_id, string $company_name): string
+    {
+        $base = sanitize_title($company_name);
+        if ($base === '') {
+            $base = 'company';
+        }
+
+        return substr($base, 0, 48) . '-' . $company_id;
+    }
+
+    private static function format_workspace(array $workspace): array
+    {
+        return [
+            'id' => (int) $workspace['id'],
+            'company_id' => (int) $workspace['company_id'],
+            'key' => (string) $workspace['workspace_key'],
+            'display_name' => (string) $workspace['display_name'],
+            'status' => (string) $workspace['status'],
+            'created_by_user_id' => (int) $workspace['created_by_user_id'],
+            'created_at' => self::nullable_datetime($workspace['created_at'] ?? null),
+            'updated_at' => self::nullable_datetime($workspace['updated_at'] ?? null),
+        ];
+    }
+
+    private static function format_workspace_membership(array $membership): array
+    {
+        return [
+            'id' => (int) $membership['id'],
+            'workspace_id' => (int) $membership['workspace_id'],
+            'company_id' => (int) $membership['company_id'],
+            'user_id' => (int) $membership['user_id'],
+            'access_request_id' => (int) $membership['access_request_id'],
+            'role' => (string) $membership['role'],
+            'status' => (string) $membership['status'],
+            'joined_at' => self::nullable_datetime($membership['joined_at'] ?? null),
+        ];
     }
 
     private static function provisioning_payload(WP_User $user, ?array $access_request, array $account_state, array $onboarding): array
