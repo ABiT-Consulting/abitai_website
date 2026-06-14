@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.3';
+    private const SCHEMA_VERSION = '2026-06-14.4';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -163,6 +163,16 @@ final class ABiT_SaaS_Auth_API
 
         register_rest_route(
             self::REST_NAMESPACE,
+            '/auth/verify',
+            [
+                'methods' => [WP_REST_Server::READABLE, WP_REST_Server::CREATABLE],
+                'callback' => [__CLASS__, 'verify_email'],
+                'permission_callback' => '__return_true',
+            ]
+        );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
             '/auth/logout',
             [
                 'methods' => WP_REST_Server::CREATABLE,
@@ -196,6 +206,25 @@ final class ABiT_SaaS_Auth_API
     {
         $path = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
         $path = untrailingslashit($path);
+
+        if ('/auth/verify' === $path && 'GET' === strtoupper($_SERVER['REQUEST_METHOD'] ?? '') && !empty($_GET['token'])) {
+            $request = new WP_REST_Request('GET', '/' . self::REST_NAMESPACE . '/auth/verify');
+            $request->set_query_params(wp_unslash($_GET));
+            $response = rest_ensure_response(self::verify_email($request));
+            $data = $response->get_data();
+
+            wp_safe_redirect(
+                add_query_arg(
+                    [
+                        'state' => self::verification_ui_state_from_code((string) ($data['code'] ?? 'verification_invalid')),
+                        'email' => sanitize_email((string) ($data['email'] ?? ($_GET['email'] ?? ''))),
+                    ],
+                    home_url('/auth/verify')
+                )
+            );
+            exit;
+        }
+
         $routes = [
             '/api/auth/register' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/register',
@@ -205,6 +234,11 @@ final class ABiT_SaaS_Auth_API
             '/api/auth/login' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/login',
                 'callback' => [__CLASS__, 'login'],
+                'method' => 'POST',
+            ],
+            '/api/auth/verify' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/auth/verify',
+                'callback' => [__CLASS__, 'verify_email'],
                 'method' => 'POST',
             ],
             '/api/auth/logout' => [
@@ -623,6 +657,142 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
+    public static function verify_email(WP_REST_Request $request): WP_REST_Response
+    {
+        self::maybe_install_schema();
+
+        $payload = self::request_payload($request);
+        $token = self::verification_token_from_request($payload, $request);
+
+        if ($token === '') {
+            return self::verification_response(
+                'verification_invalid',
+                'Verification link cannot be used.',
+                400
+            );
+        }
+
+        global $wpdb;
+
+        $now = current_time('mysql', true);
+        $token_hash = self::hmac($token);
+
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            $token_row = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT id, access_request_id, user_id, token_hash, expires_at, consumed_at, created_at FROM ' . self::table('email_verification_tokens') . ' WHERE token_hash = %s LIMIT 1 FOR UPDATE',
+                    $token_hash
+                ),
+                ARRAY_A
+            );
+
+            if (!is_array($token_row)) {
+                $wpdb->query('ROLLBACK');
+                return self::verification_response(
+                    'verification_invalid',
+                    'Verification link cannot be used.',
+                    404
+                );
+            }
+
+            $access_request = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT id, user_id, company_id, business_email, review_status, email_verified_at FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1 FOR UPDATE',
+                    (int) $token_row['access_request_id']
+                ),
+                ARRAY_A
+            );
+
+            if (!is_array($access_request)) {
+                $wpdb->query('ROLLBACK');
+                return self::verification_response(
+                    'verification_invalid',
+                    'Verification link cannot be used.',
+                    404
+                );
+            }
+
+            if (!empty($access_request['email_verified_at'])) {
+                if (empty($token_row['consumed_at'])) {
+                    self::consume_verification_token((int) $token_row['id'], $now);
+                }
+                $wpdb->query('COMMIT');
+
+                return self::verification_response(
+                    'already_verified',
+                    'Email already verified.',
+                    200,
+                    $access_request,
+                    $token_row
+                );
+            }
+
+            if (!empty($token_row['consumed_at'])) {
+                $wpdb->query('ROLLBACK');
+                return self::verification_response(
+                    'verification_used',
+                    'Verification link cannot be used.',
+                    409,
+                    $access_request,
+                    $token_row
+                );
+            }
+
+            if (strtotime((string) $token_row['expires_at']) <= time()) {
+                $wpdb->query('ROLLBACK');
+                return self::verification_response(
+                    'verification_expired',
+                    'Verification link expired.',
+                    410,
+                    $access_request,
+                    $token_row
+                );
+            }
+
+            self::consume_verification_token((int) $token_row['id'], $now);
+            self::mark_access_request_verified($access_request, $now);
+
+            $wpdb->query('COMMIT');
+
+            self::audit_event(
+                'auth_email_verified',
+                [
+                    'actor_user_id' => (int) $access_request['user_id'],
+                    'actor_type' => 'user',
+                    'entity_type' => 'email_verification_token',
+                    'entity_id' => (int) $token_row['id'],
+                    'access_request_id' => (int) $access_request['id'],
+                    'company_id' => (int) $access_request['company_id'],
+                    'event_data' => [
+                        'email' => (string) $access_request['business_email'],
+                        'previous_review_status' => (string) $access_request['review_status'],
+                        'review_status' => self::REVIEW_STATUS_ONBOARDING_REQUIRED,
+                        'verification_age_seconds' => max(0, time() - strtotime((string) $token_row['created_at'])),
+                        'verification_attempt_result' => 'success',
+                    ],
+                ]
+            );
+
+            return self::verification_response(
+                'verified',
+                'Email verified.',
+                200,
+                array_merge($access_request, ['review_status' => self::REVIEW_STATUS_ONBOARDING_REQUIRED, 'email_verified_at' => $now]),
+                array_merge($token_row, ['consumed_at' => $now])
+            );
+        } catch (Throwable $exception) {
+            $wpdb->query('ROLLBACK');
+
+            return self::verification_response(
+                'verification_failed',
+                'Verification could not be completed.',
+                500
+            );
+        }
+    }
+
     public static function logout(WP_REST_Request $request): WP_REST_Response
     {
         $user_id = self::current_authenticated_user_id();
@@ -914,6 +1084,65 @@ final class ABiT_SaaS_Auth_API
             'data' => $data,
             'field_errors' => $errors,
         ];
+    }
+
+    private static function verification_token_from_request(array $payload, WP_REST_Request $request): string
+    {
+        $token = (string) ($payload['token'] ?? $request->get_param('token') ?? '');
+        $token = trim($token);
+
+        if (!preg_match('/^[A-Za-z0-9_-]{32,256}$/', $token)) {
+            return '';
+        }
+
+        return $token;
+    }
+
+    private static function verification_response(string $code, string $message, int $status, ?array $access_request = null, ?array $token_row = null): WP_REST_Response
+    {
+        $route = self::verification_ui_state_from_code($code);
+        $email = is_array($access_request) ? (string) ($access_request['business_email'] ?? '') : '';
+        $next_status = is_array($access_request) && !empty($access_request['review_status'])
+            ? (string) $access_request['review_status']
+            : self::REVIEW_STATUS_PENDING_EMAIL;
+
+        $payload = [
+            'message' => $message,
+            'code' => $code,
+            'status' => $route,
+            'state' => $route,
+            'route' => $route === 'success' || $route === 'already_verified' ? 'onboarding' : 'verify_email',
+            'next_path' => $route === 'success' || $route === 'already_verified' ? '/auth/onboarding' : '/auth/verify',
+            'resend_path' => '/auth/verify',
+            'email' => $email,
+            'email_verified' => $route === 'success' || $route === 'already_verified',
+            'access_request_id' => is_array($access_request) ? (int) $access_request['id'] : null,
+            'review_status' => $next_status,
+        ];
+
+        if (is_array($token_row)) {
+            $payload['token'] = [
+                'id' => (int) $token_row['id'],
+                'expires_at' => self::nullable_datetime($token_row['expires_at'] ?? null),
+                'consumed_at' => self::nullable_datetime($token_row['consumed_at'] ?? null),
+            ];
+        }
+
+        return new WP_REST_Response($payload, $status);
+    }
+
+    private static function verification_ui_state_from_code(string $code): string
+    {
+        $states = [
+            'verified' => 'success',
+            'already_verified' => 'already_verified',
+            'verification_expired' => 'expired',
+            'verification_used' => 'failed',
+            'verification_invalid' => 'failed',
+            'verification_failed' => 'failed',
+        ];
+
+        return $states[$code] ?? 'failed';
     }
 
     private static function login_failed_response(): WP_REST_Response
@@ -1597,6 +1826,46 @@ final class ABiT_SaaS_Auth_API
             ['%s'],
             ['%d']
         );
+    }
+
+    private static function consume_verification_token(int $token_id, string $now): void
+    {
+        global $wpdb;
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                'UPDATE ' . self::table('email_verification_tokens') . ' SET consumed_at = %s WHERE id = %d AND consumed_at IS NULL',
+                $now,
+                $token_id
+            )
+        );
+
+        if (false === $updated) {
+            throw new RuntimeException('Verification token could not be consumed.');
+        }
+    }
+
+    private static function mark_access_request_verified(array $access_request, string $now): void
+    {
+        global $wpdb;
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                'UPDATE ' . self::table('access_requests') . ' SET review_status = %s, email_verified_at = %s, updated_at = %s WHERE id = %d AND email_verified_at IS NULL',
+                self::REVIEW_STATUS_ONBOARDING_REQUIRED,
+                $now,
+                $now,
+                (int) $access_request['id']
+            )
+        );
+
+        if (false === $updated) {
+            throw new RuntimeException('Access request could not be verified.');
+        }
+
+        update_user_meta((int) $access_request['user_id'], 'abit_saas_email_verified_at', $now);
+        update_user_meta((int) $access_request['user_id'], 'abit_saas_review_status', self::REVIEW_STATUS_ONBOARDING_REQUIRED);
+        update_user_meta((int) $access_request['user_id'], 'abitai_email_verified_at', $now);
+        update_user_meta((int) $access_request['user_id'], 'abitai_access_request_status', self::REVIEW_STATUS_ONBOARDING_REQUIRED);
     }
 
     private static function send_verification_email(string $email, string $name, string $token, array $context = []): bool
