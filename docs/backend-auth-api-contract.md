@@ -35,6 +35,7 @@ Session handling:
 | Method | Pretty path | REST path | Auth | Purpose |
 | --- | --- | --- | --- | --- |
 | POST | `/api/auth/register` | `/wp-json/abit-ai/v1/auth/register` | Public | Create a SaaS access request, WordPress user, consent audit record, and email verification token. |
+| POST | `/api/auth/resend-verification` | `/wp-json/abit-ai/v1/auth/resend-verification` | Public | Resend an email verification link for an eligible pending request with cooldown, rate limit, and token supersession. |
 | POST | `/api/auth/login` | `/wp-json/abit-ai/v1/auth/login` | Public | Authenticate credentials and return status-aware routing state. |
 | POST | `/api/auth/logout` | `/wp-json/abit-ai/v1/auth/logout` | Optional session | Revoke current session token when present. |
 | GET | `/api/auth/me` | `/wp-json/abit-ai/v1/auth/me` | Required | Return the current authenticated user, onboarding, gate, and provisioning state. |
@@ -202,6 +203,65 @@ Mock duplicate response, `409`:
   }
 }
 ```
+
+## POST /api/auth/resend-verification
+
+Creates a fresh single-use email verification token for an eligible `pending_email_verification` request and supersedes previous unconsumed verification tokens. The endpoint uses a 60-second resend cooldown and a 5-request hourly limit per eligible request/user context.
+
+Request:
+
+```json
+{
+  "business_email": "jane.ahmed@example.com"
+}
+```
+
+Accepted aliases:
+
+- `email` can be sent instead of `business_email`.
+
+Accepted response, `202`:
+
+```json
+{
+  "message": "If an eligible request exists, we will send a new verification link.",
+  "status": "accepted",
+  "sent": true,
+  "email_verification_token_id": 202
+}
+```
+
+Unknown, already verified, locked, or otherwise ineligible emails receive the same generic `202` response with `sent: false` and no token ID.
+
+Cooldown or rate-limit response, `429`:
+
+```json
+{
+  "message": "If an eligible request exists, we will send a new verification link.",
+  "status": "rate_limited",
+  "sent": false,
+  "retry_after": 60
+}
+```
+
+Validation response, `422`:
+
+```json
+{
+  "message": "Please correct the highlighted fields.",
+  "code": "validation_failed",
+  "field_errors": {
+    "business_email": "Enter a valid business email address."
+  }
+}
+```
+
+Security behavior:
+
+- Raw tokens are never returned or logged.
+- Previous unconsumed verification tokens are marked consumed/superseded before a new token is created.
+- Legacy meta-only users keep one current token hash; new resends overwrite prior valid token metadata.
+- Delivery attempts and resend outcomes are written to the auth audit log when the audit table is available.
 
 ## POST /api/auth/login
 
@@ -478,6 +538,7 @@ Build mocks around these scenarios before live API integration:
 | New registration accepted | `POST /api/auth/register` | `201` | Verify-email prompt. |
 | Registration field errors | `POST /api/auth/register` | `422` | Signup form with inline errors. |
 | Duplicate access request | `POST /api/auth/register` | `409` | Duplicate-safe sign-in/check-email state. |
+| Verification resend accepted or limited | `POST /api/auth/resend-verification` | `202` or `429` | Verify-email prompt with sent or cooldown message. |
 | Login invalid credentials | `POST /api/auth/login` | `401` | Sign-in form with generic error. |
 | Login unverified | `POST /api/auth/login` | `200`, `route: "verify_email"` | `/auth/verify`. |
 | Login onboarding required | `POST /api/auth/login` | `200`, `route: "onboarding"` | `/auth/onboarding`. |
