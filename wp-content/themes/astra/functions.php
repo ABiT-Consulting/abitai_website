@@ -783,49 +783,90 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 			exit;
 		}
 
-		$redirect_url = isset( $_POST['abitai_redirect'] ) ? esc_url_raw( wp_unslash( $_POST['abitai_redirect'] ) ) : home_url( '/' );
+		$redirect_url         = isset( $_POST['abitai_redirect'] ) ? esc_url_raw( wp_unslash( $_POST['abitai_redirect'] ) ) : home_url( '/' );
+		$success_redirect_url = isset( $_POST['abitai_success_redirect'] ) ? esc_url_raw( wp_unslash( $_POST['abitai_success_redirect'] ) ) : $redirect_url;
 
 		if ( ! isset( $_POST['abitai_signup_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['abitai_signup_nonce'] ) ), 'abitai_user_signup' ) ) {
 			wp_safe_redirect( add_query_arg( 'signup_error', 'invalid_nonce', $redirect_url ) );
 			exit;
 		}
 
-		$username         = isset( $_POST['username'] ) ? sanitize_user( wp_unslash( $_POST['username'] ) ) : '';
+		$full_name        = isset( $_POST['full_name'] ) ? sanitize_text_field( wp_unslash( $_POST['full_name'] ) ) : '';
+		$legacy_username  = isset( $_POST['username'] ) ? sanitize_text_field( wp_unslash( $_POST['username'] ) ) : '';
+		$full_name        = '' !== $full_name ? $full_name : $legacy_username;
 		$email            = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
 		$password         = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '';
 		$confirm_password = isset( $_POST['confirm_password'] ) ? (string) wp_unslash( $_POST['confirm_password'] ) : '';
+		$has_consent      = isset( $_POST['terms_privacy_acceptance'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['terms_privacy_acceptance'] ) );
 
-		if ( '' === $username || '' === $email || '' === $password || '' === $confirm_password ) {
-			wp_safe_redirect( add_query_arg( 'signup_error', 'missing_fields', $redirect_url ) );
+		$error_args = array_filter(
+			array(
+				'full_name' => $full_name,
+				'email'     => $email,
+			)
+		);
+
+		if ( '' === $full_name || '' === $email || '' === $password || '' === $confirm_password ) {
+			wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'missing_fields' ) ), $redirect_url ) );
 			exit;
 		}
 
 		if ( ! is_email( $email ) ) {
-			wp_safe_redirect( add_query_arg( 'signup_error', 'invalid_email', $redirect_url ) );
+			wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'invalid_email' ) ), $redirect_url ) );
+			exit;
+		}
+
+		if ( strlen( $password ) < 12 || strlen( $password ) > 128 || in_array( strtolower( $password ), array( 'password', 'password123', 'password123!', '123456789012', 'qwerty123456', 'admin1234567', 'welcome12345' ), true ) ) {
+			wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'weak_password' ) ), $redirect_url ) );
 			exit;
 		}
 
 		if ( $password !== $confirm_password ) {
-			wp_safe_redirect( add_query_arg( 'signup_error', 'password_mismatch', $redirect_url ) );
+			wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'password_mismatch' ) ), $redirect_url ) );
 			exit;
 		}
 
-		if ( username_exists( $username ) || email_exists( $email ) ) {
-			wp_safe_redirect( add_query_arg( 'signup_error', 'user_exists', $redirect_url ) );
+		if ( ! $has_consent ) {
+			wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'missing_consent' ) ), $redirect_url ) );
 			exit;
+		}
+
+		if ( email_exists( $email ) ) {
+			wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'user_exists' ) ), $redirect_url ) );
+			exit;
+		}
+
+		$username      = sanitize_user( current( explode( '@', $email ) ), true );
+		$username      = '' !== $username ? $username : 'abitai_user';
+		$base_username = $username;
+		$suffix        = 1;
+
+		while ( username_exists( $username ) ) {
+			$username = $base_username . $suffix;
+			$suffix++;
 		}
 
 		$user_id = wp_create_user( $username, $password, $email );
 
 		if ( is_wp_error( $user_id ) ) {
-			wp_safe_redirect( add_query_arg( 'signup_error', 'create_failed', $redirect_url ) );
+			wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'create_failed' ) ), $redirect_url ) );
 			exit;
 		}
+
+		wp_update_user(
+			array(
+				'ID'           => $user_id,
+				'display_name' => $full_name,
+				'first_name'   => $full_name,
+			)
+		);
+		update_user_meta( $user_id, 'abitai_terms_privacy_accepted_at', current_time( 'mysql', true ) );
+		update_user_meta( $user_id, 'abitai_terms_privacy_acceptance_source', 'signup_account_step' );
 
 		wp_set_current_user( $user_id );
 		wp_set_auth_cookie( $user_id );
 
-		wp_safe_redirect( add_query_arg( 'signup_success', '1', $redirect_url ) );
+		wp_safe_redirect( add_query_arg( array( 'signup_success' => '1', 'email' => $email ), $success_redirect_url ) );
 		exit;
 	}
 	add_action( 'admin_post_nopriv_abitai_user_signup', 'abitai_handle_user_signup' );

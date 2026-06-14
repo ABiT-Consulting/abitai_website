@@ -173,40 +173,84 @@ function abitai_auth_render_status_slot( $route_key ) {
 }
 
 function abitai_auth_render_signup_slot() {
+	$signup_error = isset( $_GET['signup_error'] ) ? sanitize_key( wp_unslash( $_GET['signup_error'] ) ) : '';
+	$email_value  = isset( $_GET['email'] ) ? sanitize_email( wp_unslash( $_GET['email'] ) ) : '';
+	$name_value   = isset( $_GET['full_name'] ) ? sanitize_text_field( wp_unslash( $_GET['full_name'] ) ) : '';
+
+	$error_messages = array(
+		'invalid_nonce'     => __( 'Your session expired. Please try submitting again.', 'astra' ),
+		'missing_fields'    => __( 'Complete this field to continue.', 'astra' ),
+		'invalid_email'     => __( 'Enter a valid business email address.', 'astra' ),
+		'weak_password'     => __( 'Use at least 12 characters and avoid common passwords.', 'astra' ),
+		'password_mismatch' => __( 'Passwords do not match.', 'astra' ),
+		'missing_consent'   => __( 'Accept the current terms and privacy notices to submit for review.', 'astra' ),
+		'user_exists'       => __( 'A request may already exist for this email. Sign in or check your inbox for the next step.', 'astra' ),
+		'create_failed'     => __( 'We could not start your access request right now. Please try again.', 'astra' ),
+	);
 	?>
+	<?php if ( isset( $error_messages[ $signup_error ] ) ) : ?>
+		<div id="abit-auth-signup-error" class="abit-auth-alert abit-auth-alert--error" role="alert" tabindex="-1" data-auth-autofocus>
+			<strong><?php esc_html_e( 'We could not start your request.', 'astra' ); ?></strong>
+			<span><?php echo esc_html( $error_messages[ $signup_error ] ); ?></span>
+		</div>
+	<?php endif; ?>
+	<div class="abit-auth-alert abit-auth-alert--success abit-auth-signup-success" role="status" hidden>
+		<strong><?php esc_html_e( 'Creating request...', 'astra' ); ?></strong>
+	</div>
 	<div class="abit-auth-stepper" aria-label="<?php echo esc_attr__( 'Signup progress', 'astra' ); ?>">
 		<div class="abit-auth-stepper__item is-active" aria-current="step"><span class="abit-auth-stepper__marker">1</span><span><?php esc_html_e( 'Account', 'astra' ); ?></span></div>
 		<div class="abit-auth-stepper__item"><span class="abit-auth-stepper__marker">2</span><span><?php esc_html_e( 'Company', 'astra' ); ?></span></div>
 		<div class="abit-auth-stepper__item"><span class="abit-auth-stepper__marker">3</span><span><?php esc_html_e( 'ERP needs', 'astra' ); ?></span></div>
 	</div>
-	<form class="abit-auth-form" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post">
+	<form class="abit-auth-form" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post" data-auth-signup-form novalidate>
 		<input type="hidden" name="action" value="abitai_user_signup" />
-		<input type="hidden" name="abitai_redirect" value="<?php echo esc_url( home_url( '/auth/verify?state=sent' ) ); ?>" />
+		<input type="hidden" name="abitai_redirect" value="<?php echo esc_url( home_url( '/auth/signup' ) ); ?>" />
+		<input type="hidden" name="abitai_success_redirect" value="<?php echo esc_url( home_url( '/auth/verify?state=sent' ) ); ?>" />
 		<?php wp_nonce_field( 'abitai_user_signup', 'abitai_signup_nonce' ); ?>
-		<div class="abit-auth-field">
+		<div class="abit-auth-field" data-auth-field="full_name">
 			<label for="abit-auth-signup-name"><?php esc_html_e( 'Full name', 'astra' ); ?></label>
-			<input id="abit-auth-signup-name" class="abit-auth-input" type="text" name="username" autocomplete="name" placeholder="<?php echo esc_attr__( 'Jane Ahmed', 'astra' ); ?>" required />
+			<input id="abit-auth-signup-name" class="abit-auth-input" type="text" name="full_name" autocomplete="name" placeholder="<?php echo esc_attr__( 'Jane Ahmed', 'astra' ); ?>" value="<?php echo esc_attr( $name_value ); ?>" aria-describedby="abit-auth-signup-name-error" required />
+			<p id="abit-auth-signup-name-error" class="abit-auth-error" hidden><?php esc_html_e( 'Complete this field to continue.', 'astra' ); ?></p>
 		</div>
-		<div class="abit-auth-field">
+		<div class="abit-auth-field" data-auth-field="email">
 			<label for="abit-auth-signup-email"><?php esc_html_e( 'Business email', 'astra' ); ?></label>
-			<input id="abit-auth-signup-email" class="abit-auth-input" type="email" name="email" autocomplete="email" placeholder="<?php echo esc_attr__( 'jane@company.com', 'astra' ); ?>" required />
+			<input id="abit-auth-signup-email" class="abit-auth-input" type="email" name="email" autocomplete="email" inputmode="email" placeholder="<?php echo esc_attr__( 'jane@company.com', 'astra' ); ?>" value="<?php echo esc_attr( $email_value ); ?>" aria-describedby="abit-auth-signup-email-error" required />
+			<p id="abit-auth-signup-email-error" class="abit-auth-error" hidden><?php esc_html_e( 'Enter a valid business email address.', 'astra' ); ?></p>
 		</div>
-		<div class="abit-auth-field">
+		<div class="abit-auth-field" data-auth-field="password">
 			<label for="abit-auth-signup-password"><?php esc_html_e( 'Password', 'astra' ); ?></label>
-			<input id="abit-auth-signup-password" class="abit-auth-input" type="password" name="password" autocomplete="new-password" minlength="12" required />
-			<p class="abit-auth-help"><?php esc_html_e( 'Minimum 12 characters.', 'astra' ); ?></p>
+			<input id="abit-auth-signup-password" class="abit-auth-input" type="password" name="password" autocomplete="new-password" minlength="12" maxlength="128" placeholder="<?php echo esc_attr__( 'Create a password', 'astra' ); ?>" aria-describedby="abit-auth-signup-password-help abit-auth-signup-password-error" required />
+			<p id="abit-auth-signup-password-help" class="abit-auth-help"><?php esc_html_e( 'Minimum 12 characters.', 'astra' ); ?></p>
+			<p id="abit-auth-signup-password-error" class="abit-auth-error" hidden><?php esc_html_e( 'Use at least 12 characters and avoid common passwords.', 'astra' ); ?></p>
 		</div>
-		<div class="abit-auth-field">
+		<div class="abit-auth-field" data-auth-field="confirm_password">
 			<label for="abit-auth-signup-confirm-password"><?php esc_html_e( 'Confirm new password', 'astra' ); ?></label>
-			<input id="abit-auth-signup-confirm-password" class="abit-auth-input" type="password" name="confirm_password" autocomplete="new-password" minlength="12" required />
+			<input id="abit-auth-signup-confirm-password" class="abit-auth-input" type="password" name="confirm_password" autocomplete="new-password" minlength="12" maxlength="128" aria-describedby="abit-auth-signup-confirm-password-error" required />
+			<p id="abit-auth-signup-confirm-password-error" class="abit-auth-error" hidden><?php esc_html_e( 'Passwords do not match.', 'astra' ); ?></p>
+		</div>
+		<div class="abit-auth-field" data-auth-field="consent">
+			<label class="abit-auth-checkbox" for="abit-auth-signup-consent">
+				<input id="abit-auth-signup-consent" type="checkbox" name="terms_privacy_acceptance" value="1" aria-describedby="abit-auth-signup-consent-error" required />
+				<span>
+					<?php
+					printf(
+						/* translators: 1: Terms URL, 2: Privacy URL. */
+						wp_kses_post( __( 'I accept the current <a href="%1$s" target="_blank" rel="noopener">terms</a> and <a href="%2$s" target="_blank" rel="noopener">privacy notices</a>.', 'astra' ) ),
+						esc_url( home_url( '/terms' ) ),
+						esc_url( home_url( '/privacy-policy' ) )
+					);
+					?>
+				</span>
+			</label>
+			<p id="abit-auth-signup-consent-error" class="abit-auth-error" hidden><?php esc_html_e( 'Accept the current terms and privacy notices to submit for review.', 'astra' ); ?></p>
 		</div>
 		<div class="abit-auth-actions">
-			<button type="submit" class="abit-auth-button abit-auth-button--primary"><?php esc_html_e( 'Continue', 'astra' ); ?></button>
+			<button type="submit" class="abit-auth-button abit-auth-button--primary" data-auth-submit data-loading-label="<?php echo esc_attr__( 'Creating request...', 'astra' ); ?>"><?php esc_html_e( 'Continue', 'astra' ); ?></button>
 		</div>
 	</form>
 	<p class="abit-auth-route-footer">
 		<?php esc_html_e( 'Already requested access?', 'astra' ); ?>
-		<a href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>"><?php esc_html_e( 'Sign in', 'astra' ); ?></a>
+		<a href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>" data-auth-lockable><?php esc_html_e( 'Sign in', 'astra' ); ?></a>
 	</p>
 	<?php
 }

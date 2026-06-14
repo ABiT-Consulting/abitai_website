@@ -21,7 +21,9 @@ $error_messages = array(
 	'invalid_nonce'     => __( 'Your session expired. Please try submitting again.', 'astra' ),
 	'missing_fields'    => __( 'Complete this field to continue.', 'astra' ),
 	'invalid_email'     => __( 'Enter a valid business email address.', 'astra' ),
+	'weak_password'     => __( 'Use at least 12 characters and avoid common passwords.', 'astra' ),
 	'password_mismatch' => __( 'Passwords do not match.', 'astra' ),
+	'missing_consent'   => __( 'Accept the current terms and privacy notices to submit for review.', 'astra' ),
 	'user_exists'       => __( 'A request may already exist for this email. Sign in or check your inbox for the next step.', 'astra' ),
 	'create_failed'     => __( 'We could not start your access request right now. Please try again.', 'astra' ),
 );
@@ -44,7 +46,7 @@ $error_messages = array(
 			<?php wp_nonce_field( 'abitai_user_signup', 'abitai_signup_nonce' ); ?>
 
 			<label for="signup-username"><?php esc_html_e( 'Full name', 'astra' ); ?></label>
-			<input id="signup-username" type="text" name="username" placeholder="<?php echo esc_attr__( 'Jane Ahmed', 'astra' ); ?>" required />
+			<input id="signup-username" type="text" name="full_name" placeholder="<?php echo esc_attr__( 'Jane Ahmed', 'astra' ); ?>" required />
 
 			<label for="signup-email"><?php esc_html_e( 'Business email', 'astra' ); ?></label>
 			<input id="signup-email" type="email" name="email" placeholder="<?php echo esc_attr__( 'jane@company.com', 'astra' ); ?>" required />
@@ -54,6 +56,19 @@ $error_messages = array(
 
 			<label for="signup-confirm-password"><?php esc_html_e( 'Confirm new password', 'astra' ); ?></label>
 			<input id="signup-confirm-password" type="password" name="confirm_password" minlength="12" required />
+
+			<label class="abitai-signup-consent" for="signup-consent">
+				<input id="signup-consent" type="checkbox" name="terms_privacy_acceptance" value="1" required />
+				<span>
+					<?php
+					printf(
+						wp_kses_post( __( 'I accept the current <a href="%1$s" target="_blank" rel="noopener">terms</a> and <a href="%2$s" target="_blank" rel="noopener">privacy notices</a>.', 'astra' ) ),
+						esc_url( home_url( '/terms' ) ),
+						esc_url( home_url( '/privacy-policy' ) )
+					);
+					?>
+				</span>
+			</label>
 
 			<button type="submit" class="abitai-primary-button"><?php esc_html_e( 'Continue', 'astra' ); ?></button>
 		</form>
