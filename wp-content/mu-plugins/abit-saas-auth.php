@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.6';
+    private const SCHEMA_VERSION = '2026-06-14.7';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -273,6 +273,16 @@ final class ABiT_SaaS_Auth_API
                 'permission_callback' => [__CLASS__, 'require_authentication'],
             ]
         );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            '/workspace/slug/validate',
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'validate_workspace_slug'],
+                'permission_callback' => [__CLASS__, 'require_admin_review_access'],
+            ]
+        );
     }
 
     public static function handle_pretty_api_route(): void
@@ -332,6 +342,11 @@ final class ABiT_SaaS_Auth_API
             '/api/provisioning/request' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/provisioning/request',
                 'callback' => [__CLASS__, 'request_provisioning'],
+                'method' => 'POST',
+            ],
+            '/api/workspace/slug/validate' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/workspace/slug/validate',
+                'callback' => [__CLASS__, 'validate_workspace_slug'],
                 'method' => 'POST',
             ],
         ];
@@ -413,6 +428,7 @@ final class ABiT_SaaS_Auth_API
                 current_system VARCHAR(160) NULL,
                 timeline VARCHAR(32) NULL,
                 notes TEXT NULL,
+                workspace_slug_override VARCHAR(96) NULL,
                 persona VARCHAR(64) NULL,
                 review_status VARCHAR(64) NOT NULL,
                 email_verified_at DATETIME NULL,
@@ -436,6 +452,7 @@ final class ABiT_SaaS_Auth_API
                 KEY company_id (company_id),
                 KEY review_status (review_status),
                 KEY email_delivery_status (email_delivery_status),
+                KEY workspace_slug_override (workspace_slug_override),
                 KEY company_size (company_size),
                 KEY industry (industry)
             ) {$charset_collate};
@@ -543,6 +560,8 @@ final class ABiT_SaaS_Auth_API
                 display_name VARCHAR(160) NOT NULL,
                 status VARCHAR(32) NOT NULL,
                 created_by_user_id BIGINT UNSIGNED NOT NULL,
+                workspace_slug_overridden TINYINT(1) NOT NULL DEFAULT 0,
+                workspace_slug_override_source VARCHAR(64) NULL,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
                 PRIMARY KEY  (id),
@@ -860,7 +879,7 @@ final class ABiT_SaaS_Auth_API
 
             $access_request = $wpdb->get_row(
                 $wpdb->prepare(
-                    'SELECT id, user_id, company_id, business_email, company_name, review_status, email_verified_at FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1 FOR UPDATE',
+                    'SELECT id, user_id, company_id, business_email, company_name, review_status, email_verified_at, workspace_slug_override FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1 FOR UPDATE',
                     (int) $token_row['access_request_id']
                 ),
                 ARRAY_A
@@ -1312,6 +1331,31 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
+    public static function validate_workspace_slug(WP_REST_Request $request): WP_REST_Response
+    {
+        self::maybe_install_schema();
+
+        if (!current_user_can('list_users')) {
+            return new WP_REST_Response(
+                [
+                    'message' => 'Admin review access is required.',
+                    'code' => 'rest_forbidden',
+                ],
+                403
+            );
+        }
+
+        $payload = self::request_payload($request);
+        $company_id = isset($payload['company_id']) ? max(0, (int) $payload['company_id']) : 0;
+        $raw_slug = self::first_non_empty([$payload['slug'] ?? null, $payload['workspace_slug'] ?? null]);
+        $company_name = self::clean_text($payload['company_name'] ?? '');
+        $candidate = $raw_slug !== '' ? $raw_slug : $company_name;
+        $result = self::workspace_slug_validation_result($candidate, $company_id);
+
+        $status = !empty($result['valid']) ? 200 : 422;
+        return new WP_REST_Response($result, $status);
+    }
+
     public static function require_authentication()
     {
         if (self::current_authenticated_user_id() > 0) {
@@ -1322,6 +1366,19 @@ final class ABiT_SaaS_Auth_API
             'rest_not_logged_in',
             'Authentication is required.',
             ['status' => 401]
+        );
+    }
+
+    public static function require_admin_review_access()
+    {
+        if (current_user_can('list_users')) {
+            return true;
+        }
+
+        return new WP_Error(
+            'rest_forbidden',
+            'Admin review access is required.',
+            ['status' => 403]
         );
     }
 
@@ -1554,7 +1611,7 @@ final class ABiT_SaaS_Auth_API
 
         $access_request = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
                 $user->ID,
                 $user->user_email
             ),
@@ -1936,6 +1993,38 @@ final class ABiT_SaaS_Auth_API
             ];
         }
 
+        $override = self::normalize_workspace_slug((string) ($access_request['workspace_slug_override'] ?? ''));
+        if ($override !== '') {
+            $override_validation = self::workspace_slug_validation_result($override, (int) $access_request['company_id']);
+            if (empty($override_validation['valid'])) {
+                self::audit_event(
+                    'auth_workspace_slug_rejected',
+                    [
+                        'actor_user_id' => (int) $access_request['user_id'],
+                        'actor_type' => 'system',
+                        'entity_type' => 'company',
+                        'entity_id' => (int) $access_request['company_id'],
+                        'access_request_id' => (int) $access_request['id'],
+                        'company_id' => (int) $access_request['company_id'],
+                        'event_data' => [
+                            'workspace_slug' => $override_validation['slug'],
+                            'rejection_code' => $override_validation['code'],
+                            'suggested_slug' => $override_validation['suggested_slug'],
+                        ],
+                    ]
+                );
+
+                return [
+                    'created' => false,
+                    'status' => 'held',
+                    'hold_reason' => (string) $override_validation['code'],
+                    'suggested_workspace_key' => (string) $override_validation['suggested_slug'],
+                    'workspace' => null,
+                    'membership' => null,
+                ];
+            }
+        }
+
         $workspace = self::ensure_company_workspace($access_request, $now);
         $membership = self::ensure_workspace_membership($workspace, $access_request, $now);
 
@@ -2002,7 +2091,7 @@ final class ABiT_SaaS_Auth_API
 
         $workspace = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT id, company_id, workspace_key, display_name, status, created_by_user_id, created_at, updated_at FROM ' . self::table('workspaces') . ' WHERE company_id = %d LIMIT 1',
+                'SELECT id, company_id, workspace_key, display_name, status, created_by_user_id, workspace_slug_overridden, workspace_slug_override_source, created_at, updated_at FROM ' . self::table('workspaces') . ' WHERE company_id = %d LIMIT 1',
                 $company_id
             ),
             ARRAY_A
@@ -2036,7 +2125,8 @@ final class ABiT_SaaS_Auth_API
         }
 
         global $wpdb;
-        $workspace_key = self::unique_workspace_key((int) $access_request['company_id'], (string) $access_request['company_name']);
+        $workspace_key = self::unique_workspace_key((int) $access_request['company_id'], (string) $access_request['company_name'], (string) ($access_request['workspace_slug_override'] ?? ''));
+        $slug_overridden = self::normalize_workspace_slug((string) ($access_request['workspace_slug_override'] ?? '')) !== '';
         $inserted = $wpdb->insert(
             self::table('workspaces'),
             [
@@ -2045,10 +2135,12 @@ final class ABiT_SaaS_Auth_API
                 'display_name' => (string) $access_request['company_name'],
                 'status' => self::WORKSPACE_STATUS_ACTIVE,
                 'created_by_user_id' => (int) $access_request['user_id'],
+                'workspace_slug_overridden' => $slug_overridden ? 1 : 0,
+                'workspace_slug_override_source' => $slug_overridden ? 'admin' : null,
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-            ['%d', '%s', '%s', '%s', '%d', '%s', '%s']
+            ['%d', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s']
         );
 
         if (false === $inserted || empty($wpdb->insert_id)) {
@@ -2111,14 +2203,194 @@ final class ABiT_SaaS_Auth_API
         return $created;
     }
 
-    private static function unique_workspace_key(int $company_id, string $company_name): string
+    private static function unique_workspace_key(int $company_id, string $company_name, string $admin_override = ''): string
     {
-        $base = sanitize_title($company_name);
-        if ($base === '') {
-            $base = 'company';
+        $override = self::normalize_workspace_slug($admin_override);
+        if ($override !== '') {
+            $validation = self::workspace_slug_validation_result($override, $company_id);
+            if (!empty($validation['valid'])) {
+                return (string) $validation['slug'];
+            }
+
+            throw new RuntimeException('Workspace slug override is not available. Suggested alternative: ' . (string) $validation['suggested_slug']);
         }
 
-        return substr($base, 0, 48) . '-' . $company_id;
+        return self::suggest_workspace_slug($company_name, $company_id);
+    }
+
+    private static function workspace_slug_validation_result(string $candidate, int $exclude_company_id = 0): array
+    {
+        $slug = self::normalize_workspace_slug($candidate);
+        $suggested_slug = self::suggest_workspace_slug($candidate, $exclude_company_id);
+
+        if ($slug === '') {
+            return [
+                'valid' => false,
+                'code' => 'workspace_slug_required',
+                'message' => 'Workspace slug is required.',
+                'slug' => '',
+                'suggested_slug' => $suggested_slug,
+                'reserved' => false,
+                'available' => false,
+            ];
+        }
+
+        if (strlen($slug) < 3) {
+            return [
+                'valid' => false,
+                'code' => 'workspace_slug_too_short',
+                'message' => 'Workspace slug must be at least 3 characters.',
+                'slug' => $slug,
+                'suggested_slug' => $suggested_slug,
+                'reserved' => false,
+                'available' => false,
+            ];
+        }
+
+        if (self::workspace_slug_is_reserved($slug)) {
+            return [
+                'valid' => false,
+                'code' => 'workspace_slug_reserved',
+                'message' => 'This workspace slug is reserved.',
+                'slug' => $slug,
+                'suggested_slug' => $suggested_slug,
+                'reserved' => true,
+                'available' => false,
+            ];
+        }
+
+        if (self::workspace_slug_exists($slug, $exclude_company_id)) {
+            return [
+                'valid' => false,
+                'code' => 'workspace_slug_taken',
+                'message' => 'This workspace slug is already in use.',
+                'slug' => $slug,
+                'suggested_slug' => $suggested_slug,
+                'reserved' => false,
+                'available' => false,
+            ];
+        }
+
+        return [
+            'valid' => true,
+            'code' => 'workspace_slug_available',
+            'message' => 'Workspace slug is available.',
+            'slug' => $slug,
+            'suggested_slug' => $slug,
+            'reserved' => false,
+            'available' => true,
+        ];
+    }
+
+    private static function suggest_workspace_slug(string $value, int $exclude_company_id = 0): string
+    {
+        $base = self::normalize_workspace_slug($value);
+        if ($base === '') {
+            $base = 'workspace';
+        }
+
+        if (strlen($base) < 3) {
+            $base .= '-workspace';
+        }
+
+        if (self::workspace_slug_is_reserved($base)) {
+            $base .= '-workspace';
+        }
+
+        $base = self::trim_workspace_slug($base);
+        $candidate = $base;
+        $suffix = 2;
+
+        while (self::workspace_slug_is_reserved($candidate) || self::workspace_slug_exists($candidate, $exclude_company_id)) {
+            $suffix_text = '-' . $suffix;
+            $candidate = self::trim_workspace_slug($base, strlen($suffix_text)) . $suffix_text;
+            $suffix++;
+        }
+
+        return $candidate;
+    }
+
+    private static function normalize_workspace_slug(string $value): string
+    {
+        $slug = sanitize_title($value);
+        $slug = preg_replace('/[^a-z0-9-]+/', '-', strtolower((string) $slug));
+        $slug = preg_replace('/-+/', '-', (string) $slug);
+
+        return self::trim_workspace_slug((string) $slug);
+    }
+
+    private static function trim_workspace_slug(string $slug, int $reserved_suffix_length = 0): string
+    {
+        $max_length = max(3, 63 - $reserved_suffix_length);
+        $slug = trim(substr($slug, 0, $max_length), '-');
+
+        return $slug;
+    }
+
+    private static function workspace_slug_is_reserved(string $slug): bool
+    {
+        $reserved = apply_filters(
+            'abit_saas_auth_reserved_workspace_slugs',
+            [
+                'abit',
+                'abit-ai',
+                'abitai',
+                'admin',
+                'api',
+                'app',
+                'auth',
+                'billing',
+                'blog',
+                'cdn',
+                'dashboard',
+                'docs',
+                'erp',
+                'help',
+                'login',
+                'logout',
+                'mail',
+                'marketing',
+                'new',
+                'onboarding',
+                'pricing',
+                'root',
+                'signup',
+                'static',
+                'status',
+                'support',
+                'system',
+                'test',
+                'www',
+            ]
+        );
+
+        $reserved = array_map([__CLASS__, 'normalize_workspace_slug'], array_map('strval', (array) $reserved));
+
+        return in_array($slug, $reserved, true);
+    }
+
+    private static function workspace_slug_exists(string $slug, int $exclude_company_id = 0): bool
+    {
+        global $wpdb;
+
+        if ($exclude_company_id > 0) {
+            $existing = $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT id FROM ' . self::table('workspaces') . ' WHERE workspace_key = %s AND company_id <> %d LIMIT 1',
+                    $slug,
+                    $exclude_company_id
+                )
+            );
+        } else {
+            $existing = $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT id FROM ' . self::table('workspaces') . ' WHERE workspace_key = %s LIMIT 1',
+                    $slug
+                )
+            );
+        }
+
+        return !empty($existing);
     }
 
     private static function format_workspace(array $workspace): array
@@ -2130,6 +2402,8 @@ final class ABiT_SaaS_Auth_API
             'display_name' => (string) $workspace['display_name'],
             'status' => (string) $workspace['status'],
             'created_by_user_id' => (int) $workspace['created_by_user_id'],
+            'slug_overridden' => !empty($workspace['workspace_slug_overridden']),
+            'slug_override_source' => self::nullable_key($workspace['workspace_slug_override_source'] ?? null),
             'created_at' => self::nullable_datetime($workspace['created_at'] ?? null),
             'updated_at' => self::nullable_datetime($workspace['updated_at'] ?? null),
         ];

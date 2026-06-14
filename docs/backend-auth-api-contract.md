@@ -40,6 +40,7 @@ Session handling:
 | POST | `/api/auth/logout` | `/wp-json/abit-ai/v1/auth/logout` | Optional session | Revoke current session token when present. |
 | GET | `/api/auth/me` | `/wp-json/abit-ai/v1/auth/me` | Required | Return the current authenticated user, onboarding, gate, and provisioning state. |
 | POST | `/api/provisioning/request` | `/wp-json/abit-ai/v1/provisioning/request` | Required | Record or return the manual provisioning request for an eligible access request. |
+| POST | `/api/workspace/slug/validate` | `/wp-json/abit-ai/v1/workspace/slug/validate` | Admin review | Validate a generated or admin-entered workspace slug and return a safe suggestion when blocked. |
 
 ## Account Statuses and Routes
 
@@ -121,6 +122,7 @@ Non-validation errors use this shape:
 | 409 | `validation_failed` | Duplicate registration email or WordPress user creation conflict. | Show duplicate-safe email field error. |
 | 422 | `validation_failed` | Invalid registration or login payload. | Show inline field errors. |
 | 422 | `provisioning_not_allowed` | Provisioning requested before onboarding/company requirements are met. | Keep user on current gate and display missing requirements if useful. |
+| 422 | `workspace_slug_reserved` or `workspace_slug_taken` | Workspace slug validation. | Reject the entered slug and offer `suggested_slug`. |
 | 423 | `account_locked` | Login for locked account. | Route to locked/support state. |
 | 423 | `provisioning_not_allowed` | Provisioning requested for locked or rejected account. | Route to locked/rejected state based on account status. |
 | 500 | `registration_failed` | Registration transaction or verification email failed. | Show retry message. |
@@ -553,6 +555,68 @@ Mock locked or rejected response, `423`:
   }
 }
 ```
+
+## POST /api/workspace/slug/validate
+
+Admin-only endpoint for validating a generated or manually overridden workspace slug before a workspace is created.
+
+Request:
+
+```json
+{
+  "slug": "admin",
+  "company_name": "Admin Trading LLC",
+  "company_id": 456
+}
+```
+
+Reserved-name response, `422`:
+
+```json
+{
+  "valid": false,
+  "code": "workspace_slug_reserved",
+  "message": "This workspace slug is reserved.",
+  "slug": "admin",
+  "suggested_slug": "admin-workspace",
+  "reserved": true,
+  "available": false
+}
+```
+
+Duplicate response, `422`:
+
+```json
+{
+  "valid": false,
+  "code": "workspace_slug_taken",
+  "message": "This workspace slug is already in use.",
+  "slug": "acme",
+  "suggested_slug": "acme-2",
+  "reserved": false,
+  "available": false
+}
+```
+
+Available response, `200`:
+
+```json
+{
+  "valid": true,
+  "code": "workspace_slug_available",
+  "message": "Workspace slug is available.",
+  "slug": "admin-trading-llc",
+  "suggested_slug": "admin-trading-llc",
+  "reserved": false,
+  "available": true
+}
+```
+
+Admin override storage:
+
+- `access_requests.workspace_slug_override` stores the optional admin-selected slug before workspace creation.
+- Workspace creation validates the override. Reserved or duplicate overrides hold workspace creation with `hold_reason` set to the validation code and `suggested_workspace_key` set to a safe alternative.
+- When no override is set, the backend generates a normalized slug from `company_name` and appends a numeric suffix for collisions.
 
 ## Frontend Mock Scenarios
 
