@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.4';
+    private const SCHEMA_VERSION = '2026-06-14.5';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -34,6 +34,8 @@ final class ABiT_SaaS_Auth_API
         add_filter('retrieve_password_message', [__CLASS__, 'password_reset_message'], 10, 4);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
         add_action('template_redirect', [__CLASS__, 'handle_pretty_api_route'], 0);
+        add_action('admin_menu', [__CLASS__, 'register_email_observability_page']);
+        add_action('abit_saas_auth_email_bounced', [__CLASS__, 'record_email_bounce'], 10, 1);
     }
 
     public static function configure_transactional_mailer($phpmailer): void
@@ -139,6 +141,63 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
+    public static function register_email_observability_page(): void
+    {
+        add_management_page(
+            'ABiT Email Observability',
+            'ABiT Email Observability',
+            'list_users',
+            'abit-email-observability',
+            [__CLASS__, 'render_email_observability_page']
+        );
+    }
+
+    public static function render_email_observability_page(): void
+    {
+        if (!current_user_can('list_users')) {
+            wp_die(esc_html__('You do not have permission to view this page.', 'abit-saas-auth'));
+        }
+
+        self::maybe_install_schema();
+
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            'SELECT id, business_email, company_name, review_status, email_delivery_status, email_delivery_last_event, email_delivery_last_event_at, email_delivery_sent_count, email_delivery_failed_count, email_delivery_bounced_count, email_token_expired_count, email_resend_throttled_count FROM ' . self::table('access_requests') . ' ORDER BY COALESCE(email_delivery_last_event_at, updated_at, created_at) DESC LIMIT 100',
+            ARRAY_A
+        );
+
+        echo '<div class="wrap"><h1>ABiT Email Observability</h1>';
+        echo '<p>Delivery metadata for support review. Raw tokens, full message bodies, and provider payloads are not displayed.</p>';
+        echo '<table class="widefat fixed striped"><thead><tr>';
+        foreach (['Request', 'Email', 'Company', 'Review status', 'Delivery status', 'Last event', 'Last event at', 'Sent', 'Failed', 'Bounced', 'Token expired', 'Resend throttled'] as $heading) {
+            echo '<th scope="col">' . esc_html($heading) . '</th>';
+        }
+        echo '</tr></thead><tbody>';
+
+        if (empty($rows)) {
+            echo '<tr><td colspan="12">No email delivery metadata recorded yet.</td></tr>';
+        } else {
+            foreach ($rows as $row) {
+                echo '<tr>';
+                echo '<td>' . esc_html((string) $row['id']) . '</td>';
+                echo '<td>' . esc_html(self::masked_email((string) $row['business_email'])) . '</td>';
+                echo '<td>' . esc_html((string) $row['company_name']) . '</td>';
+                echo '<td>' . esc_html((string) $row['review_status']) . '</td>';
+                echo '<td>' . esc_html((string) ($row['email_delivery_status'] ?: 'unknown')) . '</td>';
+                echo '<td>' . esc_html((string) ($row['email_delivery_last_event'] ?: 'none')) . '</td>';
+                echo '<td>' . esc_html((string) ($row['email_delivery_last_event_at'] ?: '')) . '</td>';
+                echo '<td>' . esc_html((string) (int) $row['email_delivery_sent_count']) . '</td>';
+                echo '<td>' . esc_html((string) (int) $row['email_delivery_failed_count']) . '</td>';
+                echo '<td>' . esc_html((string) (int) $row['email_delivery_bounced_count']) . '</td>';
+                echo '<td>' . esc_html((string) (int) $row['email_token_expired_count']) . '</td>';
+                echo '<td>' . esc_html((string) (int) $row['email_resend_throttled_count']) . '</td>';
+                echo '</tr>';
+            }
+        }
+
+        echo '</tbody></table></div>';
+    }
+
     public static function register_routes(): void
     {
         register_rest_route(
@@ -167,6 +226,16 @@ final class ABiT_SaaS_Auth_API
             [
                 'methods' => [WP_REST_Server::READABLE, WP_REST_Server::CREATABLE],
                 'callback' => [__CLASS__, 'verify_email'],
+                'permission_callback' => '__return_true',
+            ]
+        );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            '/auth/resend-verification',
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'resend_verification'],
                 'permission_callback' => '__return_true',
             ]
         );
@@ -241,6 +310,11 @@ final class ABiT_SaaS_Auth_API
                 'callback' => [__CLASS__, 'verify_email'],
                 'method' => 'POST',
             ],
+            '/api/auth/resend-verification' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/auth/resend-verification',
+                'callback' => [__CLASS__, 'resend_verification'],
+                'method' => 'POST',
+            ],
             '/api/auth/logout' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/logout',
                 'callback' => [__CLASS__, 'logout'],
@@ -299,6 +373,7 @@ final class ABiT_SaaS_Auth_API
         $companies = self::table('companies');
         $consents = self::table('consent_audit_records');
         $tokens = self::table('email_verification_tokens');
+        $email_events = self::table('email_delivery_events');
         $provisioning_requests = self::table('provisioning_requests');
 
         dbDelta("
@@ -339,6 +414,14 @@ final class ABiT_SaaS_Auth_API
                 terms_version VARCHAR(64) NULL,
                 privacy_version VARCHAR(64) NULL,
                 latest_consent_audit_record_id BIGINT UNSIGNED NULL,
+                email_delivery_status VARCHAR(32) NULL,
+                email_delivery_last_event VARCHAR(64) NULL,
+                email_delivery_last_event_at DATETIME NULL,
+                email_delivery_sent_count INT UNSIGNED NOT NULL DEFAULT 0,
+                email_delivery_failed_count INT UNSIGNED NOT NULL DEFAULT 0,
+                email_delivery_bounced_count INT UNSIGNED NOT NULL DEFAULT 0,
+                email_token_expired_count INT UNSIGNED NOT NULL DEFAULT 0,
+                email_resend_throttled_count INT UNSIGNED NOT NULL DEFAULT 0,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
                 PRIMARY KEY  (id),
@@ -346,6 +429,7 @@ final class ABiT_SaaS_Auth_API
                 KEY user_id (user_id),
                 KEY company_id (company_id),
                 KEY review_status (review_status),
+                KEY email_delivery_status (email_delivery_status),
                 KEY company_size (company_size),
                 KEY industry (industry)
             ) {$charset_collate};
@@ -390,6 +474,37 @@ final class ABiT_SaaS_Auth_API
                 KEY access_request_id (access_request_id),
                 KEY user_id (user_id),
                 KEY expires_at (expires_at)
+            ) {$charset_collate};
+        ");
+
+        dbDelta("
+            CREATE TABLE {$email_events} (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                access_request_id BIGINT UNSIGNED NULL,
+                user_id BIGINT UNSIGNED NULL,
+                company_id BIGINT UNSIGNED NULL,
+                email_verification_token_id BIGINT UNSIGNED NULL,
+                message_type VARCHAR(64) NOT NULL,
+                event_type VARCHAR(64) NOT NULL,
+                delivery_status VARCHAR(32) NOT NULL,
+                delivery_channel VARCHAR(32) NOT NULL DEFAULT 'email',
+                email_delivery_provider VARCHAR(64) NOT NULL,
+                recipient_domain_hash CHAR(64) NULL,
+                sender_domain VARCHAR(128) NOT NULL,
+                subject_key VARCHAR(96) NULL,
+                failure_reason_category VARCHAR(96) NULL,
+                bounce_type VARCHAR(64) NULL,
+                provider_event_id_hash CHAR(64) NULL,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY  (id),
+                KEY access_request_id (access_request_id),
+                KEY user_id (user_id),
+                KEY company_id (company_id),
+                KEY email_verification_token_id (email_verification_token_id),
+                KEY message_type (message_type),
+                KEY delivery_status (delivery_status),
+                KEY event_type (event_type),
+                KEY created_at (created_at)
             ) {$charset_collate};
         ");
 
@@ -742,6 +857,19 @@ final class ABiT_SaaS_Auth_API
 
             if (strtotime((string) $token_row['expires_at']) <= time()) {
                 $wpdb->query('ROLLBACK');
+                self::log_email_delivery(
+                    [
+                        'actor_user_id' => (int) $access_request['user_id'],
+                        'access_request_id' => (int) $access_request['id'],
+                        'company_id' => (int) $access_request['company_id'],
+                        'email_verification_token_id' => (int) $token_row['id'],
+                        'message_type' => 'email_verification',
+                        'event_type' => 'token_expired',
+                        'delivery_status' => 'token_expired',
+                        'recipient_domain_hash' => self::email_domain_hash((string) $access_request['business_email']),
+                        'subject_key' => 'verification_access_request',
+                    ]
+                );
                 return self::verification_response(
                     'verification_expired',
                     'Verification link expired.',
@@ -791,6 +919,153 @@ final class ABiT_SaaS_Auth_API
                 500
             );
         }
+    }
+
+    public static function resend_verification(WP_REST_Request $request): WP_REST_Response
+    {
+        self::maybe_install_schema();
+
+        $payload = self::request_payload($request);
+        $email = strtolower(trim((string) ($payload['business_email'] ?? $payload['email'] ?? '')));
+        if (strlen($email) > 254 || !is_email($email)) {
+            return self::field_error_response(['business_email' => 'Enter a valid business email address.']);
+        }
+
+        $generic = [
+            'message' => 'If an eligible request exists, we will send a new verification link.',
+            'status' => 'accepted',
+            'sent' => false,
+        ];
+
+        $access_request = self::access_request_for_email($email);
+        if (!is_array($access_request) || (string) $access_request['review_status'] !== self::REVIEW_STATUS_PENDING_EMAIL || !empty($access_request['email_verified_at'])) {
+            return new WP_REST_Response($generic, 202);
+        }
+
+        $user = get_userdata((int) $access_request['user_id']);
+        if ($user instanceof WP_User && self::is_user_locked($user)) {
+            return new WP_REST_Response($generic, 202);
+        }
+
+        $retry_after = self::verification_resend_retry_after((int) $access_request['id']);
+        if ($retry_after > 0) {
+            self::log_email_delivery(
+                [
+                    'actor_user_id' => (int) $access_request['user_id'],
+                    'access_request_id' => (int) $access_request['id'],
+                    'company_id' => (int) $access_request['company_id'],
+                    'message_type' => 'email_verification',
+                    'event_type' => 'resend_throttled',
+                    'delivery_status' => 'resend_throttled',
+                    'recipient_domain_hash' => self::email_domain_hash($email),
+                    'subject_key' => 'verification_access_request',
+                    'failure_reason_category' => 'resend_rate_limit',
+                ]
+            );
+
+            return new WP_REST_Response(
+                array_merge($generic, ['status' => 'rate_limited', 'retry_after' => $retry_after]),
+                429
+            );
+        }
+
+        global $wpdb;
+        $now = current_time('mysql', true);
+        $token = self::new_token();
+        $token_hash = self::hmac($token);
+        $expires_at = gmdate('Y-m-d H:i:s', time() + (int) apply_filters('abit_saas_auth_email_verification_ttl', DAY_IN_SECONDS));
+
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE ' . self::table('email_verification_tokens') . ' SET consumed_at = %s WHERE access_request_id = %d AND consumed_at IS NULL',
+                    $now,
+                    (int) $access_request['id']
+                )
+            );
+
+            $token_id = self::insert_verification_token((int) $access_request['user_id'], (int) $access_request['id'], $token_hash, $expires_at, $now);
+            $sent = self::send_verification_email(
+                $email,
+                (string) $access_request['full_name'],
+                $token,
+                [
+                    'actor_user_id' => (int) $access_request['user_id'],
+                    'access_request_id' => (int) $access_request['id'],
+                    'company_id' => (int) $access_request['company_id'],
+                    'email_verification_token_id' => $token_id,
+                    'token_expires_at' => $expires_at,
+                    'verification_send_reason' => 'resend',
+                ]
+            );
+            if (!$sent) {
+                throw new RuntimeException('Verification email could not be sent.');
+            }
+
+            self::mark_token_sent($token_id);
+            self::audit_event(
+                'auth_verification_sent',
+                [
+                    'actor_user_id' => (int) $access_request['user_id'],
+                    'actor_type' => 'system',
+                    'entity_type' => 'email_verification_token',
+                    'entity_id' => $token_id,
+                    'access_request_id' => (int) $access_request['id'],
+                    'company_id' => (int) $access_request['company_id'],
+                    'event_data' => [
+                        'verification_send_reason' => 'resend',
+                        'verification_delivery_channel' => 'email',
+                        'email_delivery_provider' => self::email_delivery_provider(),
+                        'email_domain_hash' => self::email_domain_hash($email),
+                        'token_expires_at' => $expires_at,
+                    ],
+                ]
+            );
+            $wpdb->query('COMMIT');
+
+            return new WP_REST_Response(
+                array_merge($generic, ['sent' => true, 'email_verification_token_id' => $token_id]),
+                202
+            );
+        } catch (Throwable $exception) {
+            $wpdb->query('ROLLBACK');
+            self::log_email_delivery(
+                [
+                    'actor_user_id' => (int) $access_request['user_id'],
+                    'access_request_id' => (int) $access_request['id'],
+                    'company_id' => (int) $access_request['company_id'],
+                    'message_type' => 'email_verification',
+                    'event_type' => 'delivery_attempted',
+                    'delivery_status' => 'failed',
+                    'recipient_domain_hash' => self::email_domain_hash($email),
+                    'subject_key' => 'verification_access_request',
+                    'failure_reason_category' => 'send_failed',
+                ]
+            );
+
+            return new WP_REST_Response($generic, 202);
+        }
+    }
+
+    public static function record_email_bounce(array $event): void
+    {
+        self::log_email_delivery(
+            [
+                'actor_user_id' => isset($event['user_id']) ? (int) $event['user_id'] : null,
+                'access_request_id' => isset($event['access_request_id']) ? (int) $event['access_request_id'] : null,
+                'company_id' => isset($event['company_id']) ? (int) $event['company_id'] : null,
+                'email_verification_token_id' => isset($event['email_verification_token_id']) ? (int) $event['email_verification_token_id'] : null,
+                'message_type' => sanitize_key((string) ($event['message_type'] ?? 'email')),
+                'event_type' => 'bounced',
+                'delivery_status' => 'bounced',
+                'recipient_domain_hash' => self::nullable_hash($event['recipient_domain_hash'] ?? null),
+                'subject_key' => self::nullable_key($event['subject_key'] ?? null),
+                'bounce_type' => self::nullable_key($event['bounce_type'] ?? null),
+                'provider_event_id' => (string) ($event['provider_event_id'] ?? ''),
+            ]
+        );
     }
 
     public static function logout(WP_REST_Request $request): WP_REST_Response
@@ -883,6 +1158,7 @@ final class ABiT_SaaS_Auth_API
                     'email_verified' => $account_state['email_verified'],
                     'status' => $account_state['email_verified'] ? 'verified' : 'pending',
                     'email_verified_at' => self::nullable_datetime($access_request['email_verified_at'] ?? null),
+                    'delivery' => self::email_observability_payload($access_request),
                 ],
                 'company' => self::company_payload($user, $access_request),
                 'role' => $onboarding['role'],
@@ -1221,7 +1497,7 @@ final class ABiT_SaaS_Auth_API
 
         $access_request = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
                 $user->ID,
                 $user->user_email
             ),
@@ -1229,6 +1505,56 @@ final class ABiT_SaaS_Auth_API
         );
 
         return is_array($access_request) ? $access_request : null;
+    }
+
+    private static function access_request_for_email(string $email): ?array
+    {
+        global $wpdb;
+
+        $access_request = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT id, user_id, company_id, full_name, business_email, review_status, email_verified_at FROM ' . self::table('access_requests') . ' WHERE business_email = %s ORDER BY id DESC LIMIT 1',
+                $email
+            ),
+            ARRAY_A
+        );
+
+        return is_array($access_request) ? $access_request : null;
+    }
+
+    private static function verification_resend_retry_after(int $access_request_id): int
+    {
+        global $wpdb;
+
+        $last_event_at = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT created_at FROM ' . self::table('email_delivery_events') . ' WHERE access_request_id = %d AND message_type = %s AND event_type = %s ORDER BY created_at DESC LIMIT 1',
+                $access_request_id,
+                'email_verification',
+                'delivery_attempted'
+            )
+        );
+
+        if ($last_event_at) {
+            $cooldown = (int) apply_filters('abit_saas_auth_verification_resend_cooldown', 60);
+            $elapsed = time() - strtotime((string) $last_event_at);
+            if ($elapsed < $cooldown) {
+                return max(1, $cooldown - $elapsed);
+            }
+        }
+
+        $hourly_limit = (int) apply_filters('abit_saas_auth_verification_resend_hourly_limit', 5);
+        $hourly_count = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT COUNT(*) FROM ' . self::table('email_delivery_events') . ' WHERE access_request_id = %d AND message_type = %s AND event_type = %s AND created_at >= %s',
+                $access_request_id,
+                'email_verification',
+                'delivery_attempted',
+                gmdate('Y-m-d H:i:s', time() - HOUR_IN_SECONDS)
+            )
+        );
+
+        return $hourly_count >= $hourly_limit ? 3600 : 0;
     }
 
     private static function stored_review_status_for_user(WP_User $user): string
@@ -1291,6 +1617,33 @@ final class ABiT_SaaS_Auth_API
             'status' => self::first_non_empty([
                 $access_request['company_record_status'] ?? null,
             ]),
+        ];
+    }
+
+    private static function email_observability_payload(?array $access_request): array
+    {
+        if (!is_array($access_request)) {
+            return [
+                'status' => null,
+                'last_event' => null,
+                'last_event_at' => null,
+                'sent_count' => 0,
+                'failed_count' => 0,
+                'bounced_count' => 0,
+                'token_expired_count' => 0,
+                'resend_throttled_count' => 0,
+            ];
+        }
+
+        return [
+            'status' => self::nullable_key($access_request['email_delivery_status'] ?? null),
+            'last_event' => self::nullable_key($access_request['email_delivery_last_event'] ?? null),
+            'last_event_at' => self::nullable_datetime($access_request['email_delivery_last_event_at'] ?? null),
+            'sent_count' => (int) ($access_request['email_delivery_sent_count'] ?? 0),
+            'failed_count' => (int) ($access_request['email_delivery_failed_count'] ?? 0),
+            'bounced_count' => (int) ($access_request['email_delivery_bounced_count'] ?? 0),
+            'token_expired_count' => (int) ($access_request['email_token_expired_count'] ?? 0),
+            'resend_throttled_count' => (int) ($access_request['email_resend_throttled_count'] ?? 0),
         ];
     }
 
@@ -1459,6 +1812,18 @@ final class ABiT_SaaS_Auth_API
     {
         $value = trim((string) $value);
         return $value === '' ? null : $value;
+    }
+
+    private static function nullable_key($value): ?string
+    {
+        $value = sanitize_key((string) $value);
+        return $value === '' ? null : $value;
+    }
+
+    private static function nullable_hash($value): ?string
+    {
+        $value = strtolower(trim((string) $value));
+        return preg_match('/^[a-f0-9]{64}$/', $value) ? $value : null;
     }
 
     private static function provisioning_payload(WP_User $user, ?array $access_request, array $account_state, array $onboarding): array
@@ -1940,6 +2305,8 @@ final class ABiT_SaaS_Auth_API
 
     private static function log_email_delivery(array $data): void
     {
+        self::record_email_observability_event($data);
+
         $event_data = array_merge(
             [
                 'delivery_channel' => 'email',
@@ -1971,6 +2338,98 @@ final class ABiT_SaaS_Auth_API
         if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
             error_log('abit.ai auth email delivery: ' . wp_json_encode($event_data));
         }
+    }
+
+    private static function record_email_observability_event(array $data): void
+    {
+        global $wpdb;
+
+        $event_type = sanitize_key((string) ($data['event_type'] ?? 'delivery_attempted'));
+        $delivery_status = self::email_delivery_status((string) ($data['delivery_status'] ?? $data['delivery_result'] ?? 'unknown'));
+        $message_type = sanitize_key((string) ($data['message_type'] ?? 'email'));
+        $now = current_time('mysql', true);
+        $access_request_id = isset($data['access_request_id']) ? (int) $data['access_request_id'] : null;
+
+        $wpdb->insert(
+            self::table('email_delivery_events'),
+            [
+                'access_request_id' => $access_request_id,
+                'user_id' => isset($data['actor_user_id']) ? (int) $data['actor_user_id'] : null,
+                'company_id' => isset($data['company_id']) ? (int) $data['company_id'] : null,
+                'email_verification_token_id' => isset($data['email_verification_token_id']) ? (int) $data['email_verification_token_id'] : null,
+                'message_type' => $message_type,
+                'event_type' => $event_type,
+                'delivery_status' => $delivery_status,
+                'delivery_channel' => sanitize_key((string) ($data['delivery_channel'] ?? 'email')),
+                'email_delivery_provider' => sanitize_key((string) ($data['email_delivery_provider'] ?? self::email_delivery_provider())),
+                'recipient_domain_hash' => self::nullable_hash($data['recipient_domain_hash'] ?? null),
+                'sender_domain' => self::APPROVED_SENDER_DOMAIN,
+                'subject_key' => self::nullable_key($data['subject_key'] ?? null),
+                'failure_reason_category' => self::nullable_key($data['failure_reason_category'] ?? null),
+                'bounce_type' => self::nullable_key($data['bounce_type'] ?? null),
+                'provider_event_id_hash' => !empty($data['provider_event_id']) ? self::hmac((string) $data['provider_event_id']) : null,
+                'created_at' => $now,
+            ],
+            ['%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+        );
+
+        if ($access_request_id) {
+            self::update_email_observability_summary($access_request_id, $event_type, $delivery_status, $now);
+        }
+    }
+
+    private static function update_email_observability_summary(int $access_request_id, string $event_type, string $delivery_status, string $now): void
+    {
+        global $wpdb;
+
+        $increments = [
+            'sent' => 0,
+            'failed' => 0,
+            'bounced' => 0,
+            'expired' => 0,
+            'throttled' => 0,
+        ];
+
+        if (in_array($delivery_status, ['accepted', 'sent', 'prepared'], true)) {
+            $increments['sent'] = 1;
+        } elseif ($delivery_status === 'failed') {
+            $increments['failed'] = 1;
+        } elseif ($delivery_status === 'bounced') {
+            $increments['bounced'] = 1;
+        } elseif ($event_type === 'token_expired' || $delivery_status === 'token_expired') {
+            $increments['expired'] = 1;
+        } elseif ($event_type === 'resend_throttled' || $delivery_status === 'resend_throttled') {
+            $increments['throttled'] = 1;
+        }
+
+        $wpdb->query(
+            $wpdb->prepare(
+                'UPDATE ' . self::table('access_requests') . ' SET email_delivery_status = %s, email_delivery_last_event = %s, email_delivery_last_event_at = %s, email_delivery_sent_count = email_delivery_sent_count + %d, email_delivery_failed_count = email_delivery_failed_count + %d, email_delivery_bounced_count = email_delivery_bounced_count + %d, email_token_expired_count = email_token_expired_count + %d, email_resend_throttled_count = email_resend_throttled_count + %d, updated_at = %s WHERE id = %d',
+                $delivery_status,
+                $event_type,
+                $now,
+                $increments['sent'],
+                $increments['failed'],
+                $increments['bounced'],
+                $increments['expired'],
+                $increments['throttled'],
+                $now,
+                $access_request_id
+            )
+        );
+    }
+
+    private static function email_delivery_status(string $status): string
+    {
+        $status = sanitize_key($status);
+        $aliases = [
+            'failure' => 'failed',
+            'error' => 'failed',
+            'expired' => 'token_expired',
+            'throttled' => 'resend_throttled',
+        ];
+
+        return $aliases[$status] ?? ($status ?: 'unknown');
     }
 
     private static function transactional_sender_email(): string
@@ -2012,6 +2471,20 @@ final class ABiT_SaaS_Auth_API
         $parts = explode('@', strtolower(trim($email)));
         $domain = count($parts) === 2 ? $parts[1] : '';
         return $domain === '' ? '' : self::hmac($domain);
+    }
+
+    private static function masked_email(string $email): string
+    {
+        $parts = explode('@', strtolower(trim($email)));
+        if (count($parts) !== 2) {
+            return '';
+        }
+
+        $local = $parts[0];
+        $domain = $parts[1];
+        $visible = substr($local, 0, 1);
+
+        return $visible . str_repeat('*', max(2, strlen($local) - 1)) . '@' . $domain;
     }
 
     private static function is_approved_sender_email(string $email): bool

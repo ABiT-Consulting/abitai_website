@@ -65,6 +65,17 @@ Every auth email send attempt emits `auth_email_delivery_attempted` through `abi
 
 When `WP_DEBUG_LOG` is enabled, the same delivery metadata is also written to the WordPress debug log for local troubleshooting.
 
+## Email Observability
+
+Email delivery metadata is also stored in the local auth tables for support/admin visibility:
+
+- `wp_abit_saas_email_delivery_events` stores sanitized event rows for sent or accepted delivery attempts, failed attempts, bounced events, verification-token expiry, and resend throttling.
+- `wp_abit_saas_access_requests` keeps dashboard summary fields: `email_delivery_status`, `email_delivery_last_event`, `email_delivery_last_event_at`, `email_delivery_sent_count`, `email_delivery_failed_count`, `email_delivery_bounced_count`, `email_token_expired_count`, and `email_resend_throttled_count`.
+- WordPress admin users with `list_users` can review the support dashboard at Tools > ABiT Email Observability.
+- The dashboard shows masked recipient addresses and delivery metadata only. It does not show raw verification tokens, password reset keys, email body content, provider payloads, or full recipient email addresses.
+
+Provider bounce webhooks can be normalized by calling the WordPress action `abit_saas_auth_email_bounced` with IDs and hashed recipient-domain metadata. The handler records the bounce without storing message content.
+
 ## Acceptance Check
 
 1. Configure the production provider credentials and approved `@abit.ai` sender values.
@@ -76,3 +87,4 @@ When `WP_DEBUG_LOG` is enabled, the same delivery metadata is also written to th
 7. Confirm the delivered reset email is from the approved `@abit.ai` sender.
 8. Confirm the reset URL uses the branded `/auth/reset-password/` path on the site domain.
 9. Confirm delivery attempts appear in the audit log or, in debug environments, `debug.log`.
+10. Confirm Tools > ABiT Email Observability shows delivery status and counts without raw tokens or message content.
