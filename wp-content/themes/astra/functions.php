@@ -1144,6 +1144,61 @@ if ( ! function_exists( 'abitai_handle_mock_sign_in' ) ) {
 }
 
 /**
+ * Handle mocked verification resend responses for the front-end auth MVP.
+ */
+if ( ! function_exists( 'abitai_handle_mock_resend_verification' ) ) {
+	function abitai_handle_mock_resend_verification() {
+		if ( 'POST' !== strtoupper( $_SERVER['REQUEST_METHOD'] ?? '' ) ) {
+			wp_safe_redirect( home_url( '/auth/verify' ) );
+			exit;
+		}
+
+		$email         = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
+		$mock_response = isset( $_POST['mock_response'] ) ? sanitize_key( wp_unslash( $_POST['mock_response'] ) ) : '';
+
+		if ( ! isset( $_POST['abitai_resend_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['abitai_resend_nonce'] ) ), 'abitai_mock_resend_verification' ) ) {
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'state' => 'failed',
+						'email' => $email,
+					),
+					home_url( '/auth/verify' )
+				)
+			);
+			exit;
+		}
+
+		if ( 'rate_limited' === $mock_response || 'cooldown' === $mock_response || false !== strpos( strtolower( $email ), 'cooldown' ) ) {
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'state' => 'cooldown',
+						'email' => $email,
+					),
+					home_url( '/auth/verify' )
+				)
+			);
+			exit;
+		}
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'state'  => 'sent',
+					'email'  => $email,
+					'resend' => 'accepted',
+				),
+				home_url( '/auth/verify' )
+			)
+		);
+		exit;
+	}
+	add_action( 'admin_post_nopriv_abitai_mock_resend_verification', 'abitai_handle_mock_resend_verification' );
+	add_action( 'admin_post_abitai_mock_resend_verification', 'abitai_handle_mock_resend_verification' );
+}
+
+/**
  * Show the primary AIERP message on the main page.
  */
 if ( ! function_exists( 'abitai_front_page_aierp_message' ) ) {

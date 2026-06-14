@@ -19,6 +19,15 @@ if ( ! isset( $routes[ $route_key ] ) ) {
 $route        = $routes[ $route_key ];
 $support_href = 'mailto:support@abit.ai';
 
+if ( 'verify' === $route_key ) {
+	$verification_state = abitai_auth_get_verification_state();
+	$verification_copy  = abitai_auth_get_verification_state_copy( $verification_state );
+
+	$route['title']       = $verification_copy['title'];
+	$route['eyebrow']     = $verification_copy['eyebrow'];
+	$route['description'] = $verification_copy['description'];
+}
+
 status_header( 200 );
 nocache_headers();
 
@@ -365,27 +374,228 @@ function abitai_auth_render_signup_slot() {
 }
 
 function abitai_auth_render_verify_slot() {
-	$email_value = isset( $_GET['email'] ) ? sanitize_email( wp_unslash( $_GET['email'] ) ) : '';
-	$email_label = '' !== $email_value ? $email_value : __( 'your business email', 'astra' );
+	$state         = abitai_auth_get_verification_state();
+	$copy          = abitai_auth_get_verification_state_copy( $state );
+	$email_value   = isset( $_GET['email'] ) ? sanitize_email( wp_unslash( $_GET['email'] ) ) : '';
+	$email_label   = '' !== $email_value ? $email_value : __( 'your business email', 'astra' );
+	$resend_result = isset( $_GET['resend'] ) ? sanitize_key( wp_unslash( $_GET['resend'] ) ) : '';
+	$mock_response = isset( $_GET['mock_response'] ) ? sanitize_key( wp_unslash( $_GET['mock_response'] ) ) : '';
 	?>
-	<div class="abit-auth-alert abit-auth-alert--info" role="status">
-		<strong><?php esc_html_e( 'Verification required.', 'astra' ); ?></strong>
-		<span><?php esc_html_e( 'Verify your business email before continuing to product access.', 'astra' ); ?></span>
+	<div id="abit-auth-verification-status" class="abit-auth-alert abit-auth-alert--<?php echo esc_attr( $copy['variant'] ); ?>" role="<?php echo esc_attr( 'failed' === $state ? 'alert' : 'status' ); ?>" tabindex="-1" data-auth-autofocus>
+		<strong><?php echo esc_html( $copy['summary'] ); ?></strong>
+		<span><?php echo esc_html( $copy['body'] ); ?></span>
 	</div>
-	<div class="abit-auth-status-box">
-		<span><?php esc_html_e( 'Verification email sent to:', 'astra' ); ?></span>
-		<strong><?php echo esc_html( $email_label ); ?></strong>
-	</div>
+
+	<?php if ( 'failed' !== $state || '' !== $email_value ) : ?>
+		<div class="abit-auth-status-box">
+			<span><?php echo esc_html( $copy['email_label'] ); ?></span>
+			<strong><?php echo esc_html( $email_label ); ?></strong>
+		</div>
+	<?php endif; ?>
+
+	<?php if ( 'accepted' === $resend_result ) : ?>
+		<div class="abit-auth-alert abit-auth-alert--success" role="status" tabindex="-1" data-auth-autofocus>
+			<strong><?php esc_html_e( 'Verification email sent.', 'astra' ); ?></strong>
+			<span><?php esc_html_e( 'Check your inbox and spam folder.', 'astra' ); ?></span>
+		</div>
+	<?php endif; ?>
+
+	<?php if ( $copy['resend'] ) : ?>
+		<form class="abit-auth-form abit-auth-resend-form" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post" data-auth-resend-form>
+			<input type="hidden" name="action" value="abitai_mock_resend_verification" />
+			<input type="hidden" name="state" value="<?php echo esc_attr( $state ); ?>" />
+			<input type="hidden" name="mock_response" value="<?php echo esc_attr( $mock_response ); ?>" />
+			<?php wp_nonce_field( 'abitai_mock_resend_verification', 'abitai_resend_nonce' ); ?>
+			<?php if ( '' === $email_value && 'failed' === $state ) : ?>
+				<div class="abit-auth-field" data-auth-field="resend_email">
+					<label for="abit-auth-resend-email"><?php esc_html_e( 'Business email', 'astra' ); ?></label>
+					<input id="abit-auth-resend-email" class="abit-auth-input" type="email" name="email" autocomplete="email" inputmode="email" aria-describedby="abit-auth-resend-email-help" required />
+					<p id="abit-auth-resend-email-help" class="abit-auth-help"><?php esc_html_e( 'If an eligible request exists, we will send a new verification link.', 'astra' ); ?></p>
+				</div>
+			<?php else : ?>
+				<input type="hidden" name="email" value="<?php echo esc_attr( $email_value ); ?>" />
+			<?php endif; ?>
+			<div class="abit-auth-actions">
+				<button type="submit" class="abit-auth-button abit-auth-button--primary" data-auth-submit data-loading-label="<?php echo esc_attr__( 'Sending...', 'astra' ); ?>"><?php echo esc_html( $copy['primary_action'] ); ?></button>
+			</div>
+		</form>
+	<?php else : ?>
+		<div class="abit-auth-actions">
+			<a class="abit-auth-button abit-auth-button--primary" href="<?php echo esc_url( $copy['primary_href'] ); ?>"><?php echo esc_html( $copy['primary_action'] ); ?></a>
+		</div>
+	<?php endif; ?>
+
 	<div class="abit-auth-actions">
-		<a class="abit-auth-button abit-auth-button--primary" href="mailto:"><?php esc_html_e( 'Open email app', 'astra' ); ?></a>
-		<a class="abit-auth-button abit-auth-button--secondary" href="<?php echo esc_url( home_url( '/auth/signup' ) ); ?>"><?php esc_html_e( 'Change email', 'astra' ); ?></a>
+		<?php foreach ( $copy['secondary_actions'] as $action ) : ?>
+			<?php
+			$action_href = $action['href'];
+			if ( 'sent' === $state && false !== strpos( $action_href, 'state=required' ) ) {
+				$link_args = array();
+				if ( '' !== $email_value ) {
+					$link_args['email'] = $email_value;
+				}
+				if ( '' !== $mock_response ) {
+					$link_args['mock_response'] = $mock_response;
+				}
+				$action_href = add_query_arg( $link_args, $action_href );
+			}
+			?>
+			<a class="abit-auth-button abit-auth-button--secondary" href="<?php echo esc_url( $action_href ); ?>" data-auth-lockable><?php echo esc_html( $action['label'] ); ?></a>
+		<?php endforeach; ?>
 	</div>
 	<p class="abit-auth-route-footer">
-		<a href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>"><?php esc_html_e( 'Back to sign in', 'astra' ); ?></a>
-		<span aria-hidden="true">|</span>
-		<a href="mailto:support@abit.ai"><?php esc_html_e( 'Contact support', 'astra' ); ?></a>
+		<?php echo wp_kses_post( $copy['footer'] ); ?>
 	</p>
 	<?php
+}
+
+function abitai_auth_get_verification_state() {
+	$state = isset( $_GET['state'] ) ? sanitize_key( wp_unslash( $_GET['state'] ) ) : 'required';
+	$state_aliases = array(
+		'email_sent'       => 'sent',
+		'verified'         => 'success',
+		'expired_link'     => 'expired',
+		'invalid'          => 'failed',
+		'rate_limited'     => 'cooldown',
+		'already-verified' => 'already_verified',
+		'already'          => 'already_verified',
+	);
+
+	if ( isset( $state_aliases[ $state ] ) ) {
+		$state = $state_aliases[ $state ];
+	}
+
+	$allowed_states = array( 'required', 'sent', 'success', 'expired', 'failed', 'cooldown', 'already_verified' );
+
+	return in_array( $state, $allowed_states, true ) ? $state : 'required';
+}
+
+function abitai_auth_get_verification_state_copy( $state ) {
+	$signin_link  = sprintf( '<a href="%s">%s</a>', esc_url( home_url( '/auth/sign-in' ) ), esc_html__( 'Back to sign in', 'astra' ) );
+	$support_link = sprintf( '<a href="%s">%s</a>', esc_url( 'mailto:support@abit.ai' ), esc_html__( 'Contact support', 'astra' ) );
+
+	$states = array(
+		'required' => array(
+			'eyebrow'           => __( 'Email verification', 'astra' ),
+			'title'             => __( 'Verify your email to continue', 'astra' ),
+			'description'       => __( 'Verification is required before onboarding or product access can continue.', 'astra' ),
+			'variant'           => 'info',
+			'summary'           => __( 'Verification required.', 'astra' ),
+			'body'              => __( 'We need to confirm your business email before you can continue the access request.', 'astra' ),
+			'email_label'       => __( 'Verification email sent to:', 'astra' ),
+			'primary_action'    => __( 'Resend verification email', 'astra' ),
+			'primary_href'      => '',
+			'resend'            => true,
+			'secondary_actions' => array(
+				array( 'label' => __( 'Change email', 'astra' ), 'href' => home_url( '/auth/signup' ) ),
+				array( 'label' => __( 'Sign out', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+			),
+			'footer'            => $support_link,
+		),
+		'sent' => array(
+			'eyebrow'           => __( 'Email sent', 'astra' ),
+			'title'             => __( 'Check your email', 'astra' ),
+			'description'       => __( 'Open the verification link in your email to continue your access request.', 'astra' ),
+			'variant'           => 'info',
+			'summary'           => __( 'Verification email sent.', 'astra' ),
+			'body'              => __( 'Open the link in that email to verify your address. Verification is required before your access request can continue.', 'astra' ),
+			'email_label'       => __( 'We sent a verification link to:', 'astra' ),
+			'primary_action'    => __( 'Open email app', 'astra' ),
+			'primary_href'      => 'mailto:',
+			'resend'            => false,
+			'secondary_actions' => array(
+				array( 'label' => __( 'Resend verification email', 'astra' ), 'href' => add_query_arg( array( 'state' => 'required' ), home_url( '/auth/verify' ) ) ),
+				array( 'label' => __( 'Change email', 'astra' ), 'href' => home_url( '/auth/signup' ) ),
+				array( 'label' => __( 'Sign in', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+			),
+			'footer'            => $support_link,
+		),
+		'success' => array(
+			'eyebrow'           => __( 'Verified', 'astra' ),
+			'title'             => __( 'Email verified', 'astra' ),
+			'description'       => __( 'Your business email has been confirmed.', 'astra' ),
+			'variant'           => 'success',
+			'summary'           => __( 'Email verified.', 'astra' ),
+			'body'              => __( 'Your business email has been confirmed.', 'astra' ),
+			'email_label'       => __( 'Verified email:', 'astra' ),
+			'primary_action'    => __( 'Continue access request', 'astra' ),
+			'primary_href'      => home_url( '/auth/onboarding' ),
+			'resend'            => false,
+			'secondary_actions' => array(
+				array( 'label' => __( 'Sign in with another account', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+			),
+			'footer'            => $support_link,
+		),
+		'expired' => array(
+			'eyebrow'           => __( 'Link expired', 'astra' ),
+			'title'             => __( 'Verification link expired', 'astra' ),
+			'description'       => __( 'Request a new verification email to continue.', 'astra' ),
+			'variant'           => 'warning',
+			'summary'           => __( 'Verification link expired.', 'astra' ),
+			'body'              => __( 'This link can no longer verify your email. Request a new verification email to continue.', 'astra' ),
+			'email_label'       => __( 'Email address:', 'astra' ),
+			'primary_action'    => __( 'Send a new verification email', 'astra' ),
+			'primary_href'      => '',
+			'resend'            => true,
+			'secondary_actions' => array(
+				array( 'label' => __( 'Use a different email', 'astra' ), 'href' => home_url( '/auth/signup' ) ),
+				array( 'label' => __( 'Back to sign in', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+			),
+			'footer'            => $support_link,
+		),
+		'failed' => array(
+			'eyebrow'           => __( 'Link unavailable', 'astra' ),
+			'title'             => __( 'Verification link cannot be used', 'astra' ),
+			'description'       => __( 'Request a new email if you still need to verify.', 'astra' ),
+			'variant'           => 'error',
+			'summary'           => __( 'Verification link cannot be used.', 'astra' ),
+			'body'              => __( 'We could not verify your email with this link. Request a new email if you still need to verify.', 'astra' ),
+			'email_label'       => __( 'Email address:', 'astra' ),
+			'primary_action'    => __( 'Send verification email', 'astra' ),
+			'primary_href'      => '',
+			'resend'            => true,
+			'secondary_actions' => array(
+				array( 'label' => __( 'Back to sign in', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+				array( 'label' => __( 'Contact support', 'astra' ), 'href' => 'mailto:support@abit.ai' ),
+			),
+			'footer'            => esc_html__( 'Token details are not shown for security.', 'astra' ),
+		),
+		'cooldown' => array(
+			'eyebrow'           => __( 'Resend cooldown', 'astra' ),
+			'title'             => __( 'Please wait before requesting another email', 'astra' ),
+			'description'       => __( 'The resend request is rate limited. Try again after the cooldown.', 'astra' ),
+			'variant'           => 'warning',
+			'summary'           => __( 'Please wait before requesting another verification email.', 'astra' ),
+			'body'              => __( 'We could not send another verification email yet. Check your inbox and spam folder, or try again later.', 'astra' ),
+			'email_label'       => __( 'Verification email for:', 'astra' ),
+			'primary_action'    => __( 'Back to sign in', 'astra' ),
+			'primary_href'      => home_url( '/auth/sign-in' ),
+			'resend'            => false,
+			'secondary_actions' => array(
+				array( 'label' => __( 'Use a different email', 'astra' ), 'href' => home_url( '/auth/signup' ) ),
+				array( 'label' => __( 'Contact support', 'astra' ), 'href' => 'mailto:support@abit.ai' ),
+			),
+			'footer'            => $signin_link,
+		),
+		'already_verified' => array(
+			'eyebrow'           => __( 'Already verified', 'astra' ),
+			'title'             => __( 'Email already verified', 'astra' ),
+			'description'       => __( 'This email address is already confirmed.', 'astra' ),
+			'variant'           => 'success',
+			'summary'           => __( 'Email already verified.', 'astra' ),
+			'body'              => __( 'This email address is already confirmed. Continue to the next status-aware step for this request.', 'astra' ),
+			'email_label'       => __( 'Verified email:', 'astra' ),
+			'primary_action'    => __( 'Continue access request', 'astra' ),
+			'primary_href'      => home_url( '/auth/onboarding' ),
+			'resend'            => false,
+			'secondary_actions' => array(
+				array( 'label' => __( 'Back to sign in', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+			),
+			'footer'            => $support_link,
+		),
+	);
+
+	return isset( $states[ $state ] ) ? $states[ $state ] : $states['required'];
 }
 
 function abitai_auth_render_reset_slot() {

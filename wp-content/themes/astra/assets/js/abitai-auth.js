@@ -495,6 +495,50 @@
 		} );
 	}
 
+	function initResendForm( form ) {
+		var email = form.querySelector( 'input[name="email"][type="email"]' );
+		var emailField = email ? form.querySelector( '[data-auth-field="resend_email"]' ) : null;
+		var submit = form.querySelector( '[data-auth-submit]' );
+		var defaultLabel = submit ? submit.textContent : '';
+		var loadingLabel = submit ? submit.getAttribute( 'data-loading-label' ) : '';
+
+		if ( email ) {
+			email.addEventListener( 'input', function () {
+				email.removeAttribute( 'aria-invalid' );
+				if ( emailField ) {
+					emailField.classList.remove( 'is-error' );
+				}
+			} );
+		}
+
+		form.addEventListener( 'submit', function ( event ) {
+			if ( email && ! isValidEmail( email.value.trim() ) ) {
+				event.preventDefault();
+				if ( emailField ) {
+					emailField.classList.add( 'is-error' );
+				}
+				email.setAttribute( 'aria-invalid', 'true' );
+				email.focus();
+				return;
+			}
+
+			if ( submit ) {
+				submit.disabled = true;
+				submit.classList.add( 'is-loading' );
+				submit.setAttribute( 'aria-busy', 'true' );
+				submit.textContent = loadingLabel || defaultLabel;
+			}
+
+			form.querySelectorAll( 'input' ).forEach( function ( input ) {
+				if ( 'hidden' !== input.type ) {
+					input.readOnly = true;
+				}
+			} );
+
+			lockLinks( form, true );
+		} );
+	}
+
 	document.addEventListener( 'DOMContentLoaded', function () {
 		var autofocusTarget = document.querySelector( '[data-auth-autofocus]' );
 		if ( autofocusTarget ) {
@@ -503,5 +547,6 @@
 
 		document.querySelectorAll( '[data-auth-signin-form]' ).forEach( initSignInForm );
 		document.querySelectorAll( '[data-auth-signup-form]' ).forEach( initSignupForm );
+		document.querySelectorAll( '[data-auth-resend-form]' ).forEach( initResendForm );
 	} );
 }() );
