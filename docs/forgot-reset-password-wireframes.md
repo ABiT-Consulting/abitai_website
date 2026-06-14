@@ -14,6 +14,7 @@ Define the forgot-password and reset-password screens for the abit.ai SaaS authe
 - `docs/auth-user-flow-map.md`
 - `docs/sign-in-wireframe-and-states.md`
 - `docs/email-verification-resend-wireframes.md`
+- `docs/auth-onboarding-ux-copy.md`
 - Source brief named in ERP task: `PROJ-0130_abit_saas_auth_task_tree.md`
 
 ## Shared Recovery Layout
@@ -332,3 +333,4 @@ flowchart TD
 - The reset success state returns users to sign-in instead of directly opening the product because login must still route by `review_status`.
 - Password reset token failure copy mirrors the verification-token pattern in `docs/email-verification-resend-wireframes.md` while using password-specific actions.
 - The default confirmation screen avoids echoing the submitted email to reduce shoulder-surfing and account enumeration risk.
+- Final headings, labels, helper text, button text, and errors are approved in `docs/auth-onboarding-ux-copy.md`.

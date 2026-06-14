@@ -14,6 +14,7 @@ Define the verification-required, email-sent, success, expired, failed, and alre
 - `docs/auth-user-flow-map.md`
 - `docs/sign-in-wireframe-and-states.md`
 - `docs/signup-multi-step-wireframes.md`
+- `docs/auth-onboarding-ux-copy.md`
 - Source brief named in ERP task: `PROJ-0130_abit_saas_auth_task_tree.md`
 
 ## Shared Verification Layout
@@ -329,3 +330,4 @@ Purpose: shown when the user opens a verification link after the email has alrea
 - `Continue access request` is intentionally used instead of `Open ERP` because verification alone only advances the request to onboarding or the next status-aware step.
 - Failed-token copy is generic so the UI does not expose whether a token was malformed, consumed, expired through a different path, or mismatched.
 - Resend confirmation reuses the wording from `docs/signup-multi-step-wireframes.md` to keep the signup and verification surfaces consistent.
+- Final headings, actions, helper text, and errors are approved in `docs/auth-onboarding-ux-copy.md`.

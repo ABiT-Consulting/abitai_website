@@ -6,7 +6,7 @@ Status: Draft for UX review
 
 ## Objective
 
-Define mobile-first wireframes for the abit.ai SaaS access request signup flow. The design must cover the Account, Company, ERP module interest, and Check email screens while preserving the approved multi-step structure and every required field from the signup field dictionary.
+Define mobile-first wireframes for the abit.ai access request signup flow. The design must cover the Account, Company, ERP module interest, and Check email screens while preserving the approved multi-step structure and every required field from the signup field dictionary.
 
 ## Source Context
 
@@ -15,6 +15,7 @@ Define mobile-first wireframes for the abit.ai SaaS access request signup flow. 
 - `docs/signup-multi-step-flow-decision-record.md`
 - `docs/signup-company-profile-field-dictionary.md`
 - `docs/legal-consent-privacy-capture-requirements.md`
+- `docs/auth-onboarding-ux-copy.md`
 - Source brief named in ERP task: `PROJ-0130_abit_saas_auth_task_tree.md`
 
 ## Shared Layout Pattern
@@ -61,9 +62,9 @@ Purpose: identify the requester, create the access request, create credentials w
 | Company                                          |
 | ERP needs                                        |
 |                                                  |
-| Start SaaS access request                        |
-| Tell us who should receive the verification      |
-| email for this business request.                 |
+| Start access request                             |
+| Tell us who should receive updates for this      |
+| business request.                                |
 |                                                  |
 | Full name *                                      |
 | [ Jane Ahmed                                  ] |
@@ -205,7 +206,7 @@ Purpose: capture the business workflow, ERP module fit, optional migration conte
 | [ 1-3 months                                  v ] |
 |                                                  |
 | Notes or use case detail                         |
-| [ Optional detail for admin review...         ] |
+| [ Add optional context for the review team.   ] |
 |                                                  |
 | [ ] I accept the current Terms of Service and    |
 |     Privacy Notice.                              |
@@ -315,3 +316,4 @@ The wireframes are designed to avoid horizontal scroll at 320px and wider viewpo
 - Company and ERP needs must remain grouped steps, not a single long ungrouped form.
 - Consent is placed on the final ERP needs step so the accepted legal versions align with the complete onboarding submission to admin review.
 - Admin review receives the same canonical fields listed in `docs/signup-company-profile-field-dictionary.md`.
+- Final labels, placeholders, helper text, button text, and errors are approved in `docs/auth-onboarding-ux-copy.md`.

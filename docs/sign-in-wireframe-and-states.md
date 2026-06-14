@@ -12,6 +12,7 @@ Define the sign-in wireframe and required interaction states for the abit.ai Saa
 
 - `docs/saas-auth-mvp-scope.md`
 - `docs/auth-user-flow-map.md`
+- `docs/auth-onboarding-ux-copy.md`
 - Source brief named in ERP task: `PROJ-0130_abit_saas_auth_task_tree.md`
 
 ## Base Sign-In Wireframe
@@ -20,7 +21,8 @@ Define the sign-in wireframe and required interaction states for the abit.ai Saa
 +--------------------------------------------------------------+
 | abit.ai                                                      |
 | Sign in to your workspace                                    |
-| Access your ERP advisory workspace and onboarding status.    |
+| View your access request, onboarding steps, and workspace     |
+| status.                                                      |
 |                                                              |
 | [ Email address                                          ]    |
 | [ Password                                               ]    |
@@ -29,7 +31,7 @@ Define the sign-in wireframe and required interaction states for the abit.ai Saa
 |                                                              |
 | [ Sign in ]                                                  |
 |                                                              |
-| New to abit.ai? Start SaaS access request                    |
+| New to abit.ai? Start access request                         |
 +--------------------------------------------------------------+
 ```
 
@@ -42,7 +44,7 @@ Define the sign-in wireframe and required interaction states for the abit.ai Saa
 | Password field | Required password input. Password text remains hidden by default. |
 | Forgot password link | Secondary text link aligned with the password helper row. |
 | Primary button | Full-width `Sign in` button. |
-| Signup CTA | Text CTA below the form: `New to abit.ai? Start SaaS access request`. |
+| Signup CTA | Text CTA below the form: `New to abit.ai? Start access request`. |
 | Support copy | Keep copy short and operational. Avoid implying approval before admin review. |
 
 ## Field-Level States
@@ -171,17 +173,17 @@ Requirements:
 
 ## Signup CTA State
 
-The signup CTA sends new users to the SaaS access request flow.
+The signup CTA sends new users to the access request flow.
 
 ```text
-New to abit.ai? Start SaaS access request
+New to abit.ai? Start access request
 ```
 
 Requirements:
 
 - Keep the CTA below the sign-in form and visually secondary to `Sign in`.
 - Route to the approved signup access request entry point.
-- Use the language `Start SaaS access request` so the user understands access is reviewed before product entry.
+- Use the language `Start access request` so the user understands access is reviewed before product entry.
 
 ## Acceptance Coverage Checklist
 
@@ -199,3 +201,4 @@ Requirements:
 - The sign-in screen should be compact and operational, matching the existing signup template direction in `wp-content/themes/astra/template-signup.php`.
 - Error and reset copy intentionally avoids account enumeration.
 - Successful sign-in is not always product access; routing must honor the MVP request statuses from `docs/auth-user-flow-map.md`.
+- Final labels, helper text, button text, and errors are approved in `docs/auth-onboarding-ux-copy.md`.
