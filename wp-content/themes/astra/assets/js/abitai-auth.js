@@ -539,6 +539,101 @@
 		} );
 	}
 
+	function initResetRequestForm( form ) {
+		var email = form.querySelector( '#abit-auth-reset-email' );
+		var emailField = form.querySelector( '[data-auth-field="reset_email"]' );
+		var emailError = form.querySelector( '#abit-auth-reset-email-error' );
+		var submit = form.querySelector( '[data-auth-submit]' );
+		var defaultLabel = submit ? submit.textContent : '';
+		var loadingLabel = submit ? submit.getAttribute( 'data-loading-label' ) : '';
+
+		if ( ! email ) {
+			return;
+		}
+
+		function updateSubmitState() {
+			if ( submit ) {
+				submit.disabled = ! isValidEmail( email.value.trim() );
+			}
+		}
+
+		email.addEventListener( 'input', function () {
+			setFieldError( emailField, emailError, email, false );
+			updateSubmitState();
+		} );
+
+		updateSubmitState();
+
+		form.addEventListener( 'submit', function ( event ) {
+			if ( ! isValidEmail( email.value.trim() ) ) {
+				event.preventDefault();
+				setFieldError( emailField, emailError, email, true );
+				email.focus();
+				return;
+			}
+
+			if ( submit ) {
+				submit.disabled = true;
+				submit.classList.add( 'is-loading' );
+				submit.setAttribute( 'aria-busy', 'true' );
+				submit.textContent = loadingLabel || defaultLabel;
+			}
+
+			email.readOnly = true;
+			lockLinks( form, true );
+		} );
+	}
+
+	function initResetPasswordForm( form ) {
+		var password = form.querySelector( '#abit-auth-new-password' );
+		var confirmPassword = form.querySelector( '#abit-auth-confirm-new-password' );
+		var passwordField = form.querySelector( '[data-auth-field="reset_password"]' );
+		var confirmField = form.querySelector( '[data-auth-field="reset_confirm_password"]' );
+		var passwordError = form.querySelector( '#abit-auth-new-password-error' );
+		var confirmError = form.querySelector( '#abit-auth-confirm-new-password-error' );
+		var submit = form.querySelector( '[data-auth-submit]' );
+		var defaultLabel = submit ? submit.textContent : '';
+		var loadingLabel = submit ? submit.getAttribute( 'data-loading-label' ) : '';
+
+		function clearError( input, field, error ) {
+			input.addEventListener( 'input', function () {
+				setFieldError( field, error, input, false );
+			} );
+		}
+
+		if ( ! password || ! confirmPassword ) {
+			return;
+		}
+
+		clearError( password, passwordField, passwordError );
+		clearError( confirmPassword, confirmField, confirmError );
+
+		form.addEventListener( 'submit', function ( event ) {
+			var passwordInvalid = isWeakPassword( password.value );
+			var confirmInvalid = '' === confirmPassword.value || password.value !== confirmPassword.value;
+
+			setFieldError( passwordField, passwordError, password, passwordInvalid );
+			setFieldError( confirmField, confirmError, confirmPassword, confirmInvalid );
+
+			if ( passwordInvalid || confirmInvalid ) {
+				event.preventDefault();
+				( passwordInvalid ? password : confirmPassword ).focus();
+				return;
+			}
+
+			if ( submit ) {
+				submit.disabled = true;
+				submit.classList.add( 'is-loading' );
+				submit.setAttribute( 'aria-busy', 'true' );
+				submit.textContent = loadingLabel || defaultLabel;
+			}
+
+			password.readOnly = true;
+			confirmPassword.readOnly = true;
+			lockLinks( form, true );
+		} );
+	}
+
 	document.addEventListener( 'DOMContentLoaded', function () {
 		var autofocusTarget = document.querySelector( '[data-auth-autofocus]' );
 		if ( autofocusTarget ) {
@@ -548,5 +643,7 @@
 		document.querySelectorAll( '[data-auth-signin-form]' ).forEach( initSignInForm );
 		document.querySelectorAll( '[data-auth-signup-form]' ).forEach( initSignupForm );
 		document.querySelectorAll( '[data-auth-resend-form]' ).forEach( initResendForm );
+		document.querySelectorAll( '[data-auth-reset-request-form]' ).forEach( initResetRequestForm );
+		document.querySelectorAll( '[data-auth-reset-password-form]' ).forEach( initResetPasswordForm );
 	} );
 }() );

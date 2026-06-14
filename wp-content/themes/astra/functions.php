@@ -1199,6 +1199,105 @@ if ( ! function_exists( 'abitai_handle_mock_resend_verification' ) ) {
 }
 
 /**
+ * Handle mocked password reset request responses for the front-end auth MVP.
+ */
+if ( ! function_exists( 'abitai_handle_mock_password_reset_request' ) ) {
+	function abitai_handle_mock_password_reset_request() {
+		if ( 'POST' !== strtoupper( $_SERVER['REQUEST_METHOD'] ?? '' ) ) {
+			wp_safe_redirect( home_url( '/auth/reset' ) );
+			exit;
+		}
+
+		$email         = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
+		$mock_response = isset( $_POST['mock_response'] ) ? sanitize_key( wp_unslash( $_POST['mock_response'] ) ) : '';
+		$redirect_url  = home_url( '/auth/reset' );
+
+		if ( ! isset( $_POST['abitai_reset_request_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['abitai_reset_request_nonce'] ) ), 'abitai_mock_password_reset_request' ) ) {
+			wp_safe_redirect( add_query_arg( 'state', 'invalid', $redirect_url ) );
+			exit;
+		}
+
+		if ( 'rate_limited' === $mock_response || 'cooldown' === $mock_response || false !== strpos( strtolower( $email ), 'cooldown' ) ) {
+			wp_safe_redirect( add_query_arg( 'reset_error', 'rate_limited', $redirect_url ) );
+			exit;
+		}
+
+		wp_safe_redirect( add_query_arg( 'state', 'accepted', $redirect_url ) );
+		exit;
+	}
+	add_action( 'admin_post_nopriv_abitai_mock_password_reset_request', 'abitai_handle_mock_password_reset_request' );
+	add_action( 'admin_post_abitai_mock_password_reset_request', 'abitai_handle_mock_password_reset_request' );
+}
+
+/**
+ * Handle mocked password reset submission responses for the front-end auth MVP.
+ */
+if ( ! function_exists( 'abitai_handle_mock_password_reset_submit' ) ) {
+	function abitai_handle_mock_password_reset_submit() {
+		if ( 'POST' !== strtoupper( $_SERVER['REQUEST_METHOD'] ?? '' ) ) {
+			wp_safe_redirect( home_url( '/auth/reset' ) );
+			exit;
+		}
+
+		$token            = isset( $_POST['token'] ) ? preg_replace( '/[^A-Za-z0-9_\-]/', '', sanitize_text_field( wp_unslash( $_POST['token'] ) ) ) : '';
+		$password         = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '';
+		$confirm_password = isset( $_POST['confirm_password'] ) ? (string) wp_unslash( $_POST['confirm_password'] ) : '';
+		$set_url          = add_query_arg(
+			array(
+				'state' => 'set',
+				'token' => $token,
+			),
+			home_url( '/auth/reset-password' )
+		);
+
+		if ( ! isset( $_POST['abitai_reset_submit_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['abitai_reset_submit_nonce'] ) ), 'abitai_mock_password_reset_submit' ) ) {
+			wp_safe_redirect( add_query_arg( 'state', 'invalid', home_url( '/auth/reset-password' ) ) );
+			exit;
+		}
+
+		if ( 'expired-reset-token' === $token || 'expired' === $token ) {
+			wp_safe_redirect( add_query_arg( 'state', 'expired', home_url( '/auth/reset-password' ) ) );
+			exit;
+		}
+
+		if ( '' === $token || 'used-reset-token' === $token || 'invalid-reset-token' === $token || 'invalid' === $token ) {
+			wp_safe_redirect( add_query_arg( 'state', 'invalid', home_url( '/auth/reset-password' ) ) );
+			exit;
+		}
+
+		if ( '' === $password || '' === $confirm_password ) {
+			wp_safe_redirect( add_query_arg( 'reset_error', 'missing_fields', $set_url ) );
+			exit;
+		}
+
+		$common_passwords = array(
+			'password',
+			'password123',
+			'password123!',
+			'123456789012',
+			'qwerty123456',
+			'admin1234567',
+			'welcome12345',
+		);
+
+		if ( strlen( $password ) < 12 || strlen( $password ) > 128 || in_array( strtolower( $password ), $common_passwords, true ) ) {
+			wp_safe_redirect( add_query_arg( 'reset_error', 'weak_password', $set_url ) );
+			exit;
+		}
+
+		if ( ! hash_equals( $password, $confirm_password ) ) {
+			wp_safe_redirect( add_query_arg( 'reset_error', 'mismatch', $set_url ) );
+			exit;
+		}
+
+		wp_safe_redirect( add_query_arg( 'state', 'success', home_url( '/auth/reset-password' ) ) );
+		exit;
+	}
+	add_action( 'admin_post_nopriv_abitai_mock_password_reset_submit', 'abitai_handle_mock_password_reset_submit' );
+	add_action( 'admin_post_abitai_mock_password_reset_submit', 'abitai_handle_mock_password_reset_submit' );
+}
+
+/**
  * Show the primary AIERP message on the main page.
  */
 if ( ! function_exists( 'abitai_front_page_aierp_message' ) ) {

@@ -26,6 +26,13 @@ if ( 'verify' === $route_key ) {
 	$route['title']       = $verification_copy['title'];
 	$route['eyebrow']     = $verification_copy['eyebrow'];
 	$route['description'] = $verification_copy['description'];
+} elseif ( 'reset' === $route_key ) {
+	$reset_state = abitai_auth_get_reset_state();
+	$reset_copy  = abitai_auth_get_reset_state_copy( $reset_state );
+
+	$route['title']       = $reset_copy['title'];
+	$route['eyebrow']     = $reset_copy['eyebrow'];
+	$route['description'] = $reset_copy['description'];
 }
 
 status_header( 200 );
@@ -599,19 +606,249 @@ function abitai_auth_get_verification_state_copy( $state ) {
 }
 
 function abitai_auth_render_reset_slot() {
+	$state      = abitai_auth_get_reset_state();
+	$copy       = abitai_auth_get_reset_state_copy( $state );
+	$token      = abitai_auth_get_reset_token();
+	$error      = isset( $_GET['reset_error'] ) ? sanitize_key( wp_unslash( $_GET['reset_error'] ) ) : '';
+	$mock_state = isset( $_GET['mock_response'] ) ? sanitize_key( wp_unslash( $_GET['mock_response'] ) ) : '';
+
+	if ( 'request' === $state ) :
 	?>
-	<form class="abit-auth-form" action="<?php echo esc_url( wp_lostpassword_url() ); ?>" method="post">
-		<div class="abit-auth-field">
+	<?php if ( 'rate_limited' === $error || 'cooldown' === $error ) : ?>
+		<div id="abit-auth-reset-request-status" class="abit-auth-alert abit-auth-alert--warning" role="alert" tabindex="-1" data-auth-autofocus>
+			<strong><?php esc_html_e( 'Please wait before requesting another reset email.', 'astra' ); ?></strong>
+		</div>
+	<?php endif; ?>
+	<form class="abit-auth-form" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post" data-auth-reset-request-form novalidate>
+		<input type="hidden" name="action" value="abitai_mock_password_reset_request" />
+		<input type="hidden" name="mock_response" value="<?php echo esc_attr( $mock_state ); ?>" />
+		<?php wp_nonce_field( 'abitai_mock_password_reset_request', 'abitai_reset_request_nonce' ); ?>
+		<div class="abit-auth-field" data-auth-field="reset_email">
 			<label for="abit-auth-reset-email"><?php esc_html_e( 'Email address', 'astra' ); ?></label>
-			<input id="abit-auth-reset-email" class="abit-auth-input" type="email" name="user_login" autocomplete="email" required />
-			<p class="abit-auth-help"><?php esc_html_e( 'If an eligible account exists, reset instructions will be sent to that address.', 'astra' ); ?></p>
+			<input id="abit-auth-reset-email" class="abit-auth-input" type="email" name="email" autocomplete="email" inputmode="email" placeholder="<?php echo esc_attr__( 'jane@company.com', 'astra' ); ?>" aria-describedby="abit-auth-reset-email-error" required />
+			<p id="abit-auth-reset-email-error" class="abit-auth-error" hidden><?php esc_html_e( 'Enter a valid email address.', 'astra' ); ?></p>
 		</div>
 		<div class="abit-auth-actions">
-			<button type="submit" class="abit-auth-button abit-auth-button--primary"><?php esc_html_e( 'Send reset instructions', 'astra' ); ?></button>
+			<button type="submit" class="abit-auth-button abit-auth-button--primary" data-auth-submit data-loading-label="<?php echo esc_attr__( 'Sending...', 'astra' ); ?>"><?php esc_html_e( 'Send reset instructions', 'astra' ); ?></button>
 		</div>
 	</form>
 	<p class="abit-auth-route-footer">
-		<a href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>"><?php esc_html_e( 'Back to sign in', 'astra' ); ?></a>
+		<a href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>" data-auth-lockable><?php esc_html_e( 'Back to sign in', 'astra' ); ?></a>
 	</p>
 	<?php
+		return;
+	endif;
+
+	if ( 'accepted' === $state || 'success' === $state || 'expired' === $state || 'invalid' === $state ) :
+		?>
+		<div id="abit-auth-reset-status" class="abit-auth-alert abit-auth-alert--<?php echo esc_attr( $copy['variant'] ); ?>" role="<?php echo esc_attr( 'invalid' === $state ? 'alert' : 'status' ); ?>" tabindex="-1" data-auth-autofocus>
+			<strong><?php echo esc_html( $copy['summary'] ); ?></strong>
+			<span><?php echo esc_html( $copy['body'] ); ?></span>
+		</div>
+		<div class="abit-auth-actions">
+			<a class="abit-auth-button abit-auth-button--primary" href="<?php echo esc_url( $copy['primary_href'] ); ?>"><?php echo esc_html( $copy['primary_action'] ); ?></a>
+			<?php foreach ( $copy['secondary_actions'] as $action ) : ?>
+				<a class="abit-auth-button abit-auth-button--secondary" href="<?php echo esc_url( $action['href'] ); ?>"><?php echo esc_html( $action['label'] ); ?></a>
+			<?php endforeach; ?>
+		</div>
+		<?php
+		return;
+	endif;
+
+	if ( 'checking' === $state ) :
+		?>
+		<div id="abit-auth-reset-status" class="abit-auth-alert abit-auth-alert--info" role="status" tabindex="-1" data-auth-autofocus>
+			<strong><?php esc_html_e( 'Checking reset link.', 'astra' ); ?></strong>
+			<span><?php esc_html_e( 'Please wait while we check whether this reset link can be used.', 'astra' ); ?></span>
+		</div>
+		<div class="abit-auth-actions">
+			<button type="button" class="abit-auth-button abit-auth-button--primary is-loading" aria-busy="true" disabled><?php esc_html_e( 'Validating...', 'astra' ); ?></button>
+		</div>
+		<script>
+			window.setTimeout(function () {
+				var url = new URL(window.location.href);
+				url.searchParams.set('state', 'set');
+				window.location.replace(url.toString());
+			}, 350);
+		</script>
+		<?php
+		return;
+	endif;
+
+	if ( 'set' === $state ) :
+		?>
+	<?php if ( 'mismatch' === $error || 'weak_password' === $error || 'missing_fields' === $error ) : ?>
+		<div id="abit-auth-reset-submit-status" class="abit-auth-alert abit-auth-alert--error" role="alert" tabindex="-1" data-auth-autofocus>
+			<strong><?php esc_html_e( 'We could not update your password.', 'astra' ); ?></strong>
+			<span><?php echo esc_html( abitai_auth_get_reset_error_message( $error ) ); ?></span>
+		</div>
+	<?php endif; ?>
+	<form class="abit-auth-form" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post" data-auth-reset-password-form novalidate>
+		<input type="hidden" name="action" value="abitai_mock_password_reset_submit" />
+		<input type="hidden" name="token" value="<?php echo esc_attr( $token ); ?>" />
+		<?php wp_nonce_field( 'abitai_mock_password_reset_submit', 'abitai_reset_submit_nonce' ); ?>
+		<div class="abit-auth-field" data-auth-field="reset_password">
+			<label for="abit-auth-new-password"><?php esc_html_e( 'New password', 'astra' ); ?></label>
+			<input id="abit-auth-new-password" class="abit-auth-input" type="password" name="password" autocomplete="new-password" minlength="12" maxlength="128" aria-describedby="abit-auth-new-password-help abit-auth-new-password-error" required />
+			<p id="abit-auth-new-password-help" class="abit-auth-help"><?php esc_html_e( 'Minimum 12 characters.', 'astra' ); ?></p>
+			<p id="abit-auth-new-password-error" class="abit-auth-error" hidden><?php esc_html_e( 'Use at least 12 characters and avoid common passwords.', 'astra' ); ?></p>
+		</div>
+		<div class="abit-auth-field" data-auth-field="reset_confirm_password">
+			<label for="abit-auth-confirm-new-password"><?php esc_html_e( 'Confirm new password', 'astra' ); ?></label>
+			<input id="abit-auth-confirm-new-password" class="abit-auth-input" type="password" name="confirm_password" autocomplete="new-password" minlength="12" maxlength="128" aria-describedby="abit-auth-confirm-new-password-error" required />
+			<p id="abit-auth-confirm-new-password-error" class="abit-auth-error" hidden><?php esc_html_e( 'Passwords do not match.', 'astra' ); ?></p>
+		</div>
+		<div class="abit-auth-actions">
+			<button type="submit" class="abit-auth-button abit-auth-button--primary" data-auth-submit data-loading-label="<?php echo esc_attr__( 'Saving...', 'astra' ); ?>"><?php esc_html_e( 'Save new password', 'astra' ); ?></button>
+			<a class="abit-auth-button abit-auth-button--secondary" href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>" data-auth-lockable><?php esc_html_e( 'Back to sign in', 'astra' ); ?></a>
+		</div>
+	</form>
+		<?php
+	endif;
+}
+
+function abitai_auth_get_reset_token() {
+	$token = isset( $_GET['token'] ) ? sanitize_text_field( wp_unslash( $_GET['token'] ) ) : '';
+
+	return preg_replace( '/[^A-Za-z0-9_\-]/', '', $token );
+}
+
+function abitai_auth_get_reset_state() {
+	$state = isset( $_GET['state'] ) ? sanitize_key( wp_unslash( $_GET['state'] ) ) : '';
+	$token = abitai_auth_get_reset_token();
+
+	$state_aliases = array(
+		'request_accepted' => 'accepted',
+		'check_email'      => 'accepted',
+		'valid'            => 'set',
+		'validating'       => 'checking',
+		'cannot_use'       => 'invalid',
+		'failed'           => 'invalid',
+		'used'             => 'invalid',
+		'expired_link'     => 'expired',
+		'updated'          => 'success',
+	);
+
+	if ( isset( $state_aliases[ $state ] ) ) {
+		$state = $state_aliases[ $state ];
+	}
+
+	if ( '' === $state && '' !== $token ) {
+		$token_states = array(
+			'valid-reset-token'   => 'checking',
+			'valid'               => 'checking',
+			'expired-reset-token' => 'expired',
+			'expired'             => 'expired',
+			'used-reset-token'    => 'invalid',
+			'invalid-reset-token' => 'invalid',
+			'invalid'             => 'invalid',
+		);
+
+		$state = isset( $token_states[ $token ] ) ? $token_states[ $token ] : 'invalid';
+	}
+
+	$allowed_states = array( 'request', 'accepted', 'checking', 'set', 'expired', 'invalid', 'success' );
+
+	return in_array( $state, $allowed_states, true ) ? $state : 'request';
+}
+
+function abitai_auth_get_reset_state_copy( $state ) {
+	$states = array(
+		'request'  => array(
+			'eyebrow'           => __( 'Account recovery', 'astra' ),
+			'title'             => __( 'Reset your password', 'astra' ),
+			'description'       => __( 'Enter your email and we will send reset instructions if the account is eligible.', 'astra' ),
+			'variant'           => 'info',
+			'summary'           => __( 'Reset your password.', 'astra' ),
+			'body'              => __( 'Enter your email and we will send reset instructions if the account is eligible.', 'astra' ),
+			'primary_action'    => __( 'Send reset instructions', 'astra' ),
+			'primary_href'      => '',
+			'secondary_actions' => array(),
+		),
+		'accepted' => array(
+			'eyebrow'           => __( 'Check email', 'astra' ),
+			'title'             => __( 'Check your email', 'astra' ),
+			'description'       => __( 'If an eligible account exists, reset instructions will be sent to that address.', 'astra' ),
+			'variant'           => 'info',
+			'summary'           => __( 'Check your email.', 'astra' ),
+			'body'              => __( 'If an eligible account exists, reset instructions will be sent to that address.', 'astra' ),
+			'primary_action'    => __( 'Back to sign in', 'astra' ),
+			'primary_href'      => home_url( '/auth/sign-in' ),
+			'secondary_actions' => array(
+				array( 'label' => __( 'Send another reset request', 'astra' ), 'href' => home_url( '/auth/reset' ) ),
+			),
+		),
+		'checking' => array(
+			'eyebrow'           => __( 'Checking link', 'astra' ),
+			'title'             => __( 'Checking reset link', 'astra' ),
+			'description'       => __( 'Please wait while we check whether this reset link can be used.', 'astra' ),
+			'variant'           => 'info',
+			'summary'           => __( 'Checking reset link.', 'astra' ),
+			'body'              => __( 'Please wait while we check whether this reset link can be used.', 'astra' ),
+			'primary_action'    => __( 'Validating...', 'astra' ),
+			'primary_href'      => '',
+			'secondary_actions' => array(),
+		),
+		'set'      => array(
+			'eyebrow'           => __( 'New password', 'astra' ),
+			'title'             => __( 'Create a new password', 'astra' ),
+			'description'       => __( 'Use a strong password for your abit.ai account.', 'astra' ),
+			'variant'           => 'info',
+			'summary'           => __( 'Create a new password.', 'astra' ),
+			'body'              => __( 'Use a strong password for your abit.ai account.', 'astra' ),
+			'primary_action'    => __( 'Save new password', 'astra' ),
+			'primary_href'      => '',
+			'secondary_actions' => array(),
+		),
+		'expired'  => array(
+			'eyebrow'           => __( 'Link expired', 'astra' ),
+			'title'             => __( 'Reset link expired', 'astra' ),
+			'description'       => __( 'This link can no longer reset your password. Request a new reset email to continue.', 'astra' ),
+			'variant'           => 'warning',
+			'summary'           => __( 'Reset link expired.', 'astra' ),
+			'body'              => __( 'This link can no longer reset your password. Request a new reset email to continue.', 'astra' ),
+			'primary_action'    => __( 'Send a new reset email', 'astra' ),
+			'primary_href'      => home_url( '/auth/reset' ),
+			'secondary_actions' => array(
+				array( 'label' => __( 'Back to sign in', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+			),
+		),
+		'invalid'  => array(
+			'eyebrow'           => __( 'Link unavailable', 'astra' ),
+			'title'             => __( 'Reset link cannot be used', 'astra' ),
+			'description'       => __( 'We could not reset your password with this link. Request a new reset email if you still need to change your password.', 'astra' ),
+			'variant'           => 'error',
+			'summary'           => __( 'Reset link cannot be used.', 'astra' ),
+			'body'              => __( 'We could not reset your password with this link. Request a new reset email if you still need to change your password.', 'astra' ),
+			'primary_action'    => __( 'Send reset email', 'astra' ),
+			'primary_href'      => home_url( '/auth/reset' ),
+			'secondary_actions' => array(
+				array( 'label' => __( 'Back to sign in', 'astra' ), 'href' => home_url( '/auth/sign-in' ) ),
+				array( 'label' => __( 'Contact support', 'astra' ), 'href' => 'mailto:support@abit.ai' ),
+			),
+		),
+		'success'  => array(
+			'eyebrow'           => __( 'Password updated', 'astra' ),
+			'title'             => __( 'Password updated', 'astra' ),
+			'description'       => __( 'Your password has been changed. Sign in with your new password to continue.', 'astra' ),
+			'variant'           => 'success',
+			'summary'           => __( 'Password updated.', 'astra' ),
+			'body'              => __( 'Your password has been changed. Sign in with your new password to continue.', 'astra' ),
+			'primary_action'    => __( 'Back to sign in', 'astra' ),
+			'primary_href'      => home_url( '/auth/sign-in' ),
+			'secondary_actions' => array(),
+		),
+	);
+
+	return isset( $states[ $state ] ) ? $states[ $state ] : $states['request'];
+}
+
+function abitai_auth_get_reset_error_message( $error ) {
+	$messages = array(
+		'missing_fields' => __( 'Complete this field to continue.', 'astra' ),
+		'weak_password'  => __( 'Use at least 12 characters and avoid common passwords.', 'astra' ),
+		'mismatch'       => __( 'Passwords do not match.', 'astra' ),
+	);
+
+	return isset( $messages[ $error ] ) ? $messages[ $error ] : __( 'We could not reset your password with this link. Request a new reset email if you still need to change your password.', 'astra' );
 }
