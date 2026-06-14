@@ -167,6 +167,11 @@ if ( version_compare( PHP_VERSION, '5.3', '>=' ) ) {
 require_once ASTRA_THEME_DIR . 'inc/core/markup/class-astra-markup.php';
 
 /**
+ * abit.ai SaaS auth route shell.
+ */
+require_once ASTRA_THEME_DIR . 'inc/abitai-auth-routes.php';
+
+/**
  * Load deprecated functions
  */
 require_once ASTRA_THEME_DIR . 'inc/core/deprecated/deprecated-filters.php';
