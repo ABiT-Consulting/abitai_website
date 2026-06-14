@@ -170,6 +170,7 @@ require_once ASTRA_THEME_DIR . 'inc/core/markup/class-astra-markup.php';
  * abit.ai SaaS auth route shell.
  */
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-schema.php';
+require_once ASTRA_THEME_DIR . 'inc/abitai-erp-access-gate.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-routes.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-resend-verification-api.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-password-reset.php';
@@ -1297,21 +1298,44 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 			$status = 'pending_email_verification';
 		}
 
-		$company_name = isset( $_GET['company_name'] ) ? sanitize_text_field( wp_unslash( $_GET['company_name'] ) ) : '';
+		$company_name          = isset( $_GET['company_name'] ) ? sanitize_text_field( wp_unslash( $_GET['company_name'] ) ) : '';
+		$product_access       = ( 'live' === $status && ! is_user_logged_in() );
+		$missing_requirements = array();
+		$gate_checks          = array();
 
 		if ( '' === $company_name && is_user_logged_in() ) {
 			$company_name = sanitize_text_field( (string) get_user_meta( get_current_user_id(), 'abitai_company_name', true ) );
 		}
 
+		if ( is_user_logged_in() && function_exists( 'abitai_erp_access_gate_get_user_context' ) && function_exists( 'abitai_erp_access_gate_evaluate' ) ) {
+			$gate_context = abitai_erp_access_gate_get_user_context( get_current_user_id() );
+			$gate_result  = abitai_erp_access_gate_evaluate( $gate_context );
+
+			$product_access       = ! empty( $gate_result['product_access'] );
+			$missing_requirements = isset( $gate_result['missing_requirements'] ) ? (array) $gate_result['missing_requirements'] : array();
+			$gate_checks          = isset( $gate_result['checks'] ) ? (array) $gate_result['checks'] : array();
+
+			if ( isset( $gate_context['status'], $statuses[ $gate_context['status'] ] ) ) {
+				$status = $gate_context['status'];
+			}
+
+			if ( '' === $company_name && ! empty( $gate_context['company_name'] ) ) {
+				$company_name = $gate_context['company_name'];
+			}
+		}
+
 		$onboarding_state = ( 'pending_email_verification' === $status ) ? 'blocked' : abitai_normalize_onboarding_state( $status );
 
 		return array(
-			'status'           => $status,
-			'status_label'     => $statuses[ $status ],
-			'onboarding_state' => $onboarding_state,
-			'state_label'      => $statuses[ $onboarding_state ],
-			'email'            => $email,
-			'company_name'     => $company_name,
+			'status'               => $status,
+			'status_label'         => $statuses[ $status ],
+			'onboarding_state'     => $onboarding_state,
+			'state_label'          => $statuses[ $onboarding_state ],
+			'email'                => $email,
+			'company_name'         => $company_name,
+			'product_access'       => $product_access,
+			'missing_requirements' => $missing_requirements,
+			'gate_checks'          => $gate_checks,
 		);
 	}
 }
@@ -1329,6 +1353,8 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_gate' ) ) {
 
 		$gate = array(
 			'onboarding_state'          => $state,
+			'product_access'            => ! empty( $request['product_access'] ),
+			'missing_requirements'      => isset( $request['missing_requirements'] ) ? (array) $request['missing_requirements'] : array(),
 			'profile_state'             => __( 'Incomplete', 'astra' ),
 			'profile_variant'           => 'pending',
 			'profile_description'       => __( 'Complete the required company profile fields before admin review can begin.', 'astra' ),
@@ -1440,6 +1466,21 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_gate' ) ) {
 				$gate['alert_summary']       = __( 'Workspace access ready.', 'astra' );
 				$gate['alert_body']          = __( 'Your workspace access is ready.', 'astra' );
 				break;
+		}
+
+		if ( 'live' === $state && empty( $gate['product_access'] ) ) {
+			$gate['profile_state']       = __( 'Approved', 'astra' );
+			$gate['profile_variant']     = 'approved';
+			$gate['profile_description'] = __( 'The access request is approved, but ERP access is still waiting on required gate checks.', 'astra' );
+			$gate['provisioning_state']  = __( 'Blocked', 'astra' );
+			$gate['provisioning_variant'] = 'rejected';
+			$gate['provisioning_description'] = __( 'Full ERP access requires email verification, complete onboarding, an active workspace role, an active tenant, and an ERP entitlement.', 'astra' );
+			$gate['next_action']         = __( 'View access status', 'astra' );
+			$gate['next_href']           = home_url( '/dashboard' );
+			$gate['next_variant']        = 'secondary';
+			$gate['alert_variant']       = 'warning';
+			$gate['alert_summary']       = __( 'ERP access is not ready.', 'astra' );
+			$gate['alert_body']          = __( 'One or more ERP access requirements are still incomplete.', 'astra' );
 		}
 
 		return $gate;
