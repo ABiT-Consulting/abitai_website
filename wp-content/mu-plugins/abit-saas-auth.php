@@ -154,6 +154,14 @@ final class ABiT_SaaS_Auth_API
             'abit-email-observability',
             [__CLASS__, 'render_email_observability_page']
         );
+
+        add_management_page(
+            'ABiT Signup Review',
+            'ABiT Signup Review',
+            'list_users',
+            'abit-signup-review',
+            [__CLASS__, 'render_signup_review_page']
+        );
     }
 
     public static function render_email_observability_page(): void
@@ -200,6 +208,261 @@ final class ABiT_SaaS_Auth_API
         }
 
         echo '</tbody></table></div>';
+    }
+
+    public static function render_signup_review_page(): void
+    {
+        if (!current_user_can('list_users')) {
+            wp_die(esc_html__('You do not have permission to view this page.', 'abit-saas-auth'));
+        }
+
+        self::maybe_install_schema();
+
+        $filters = self::signup_review_filters_from_request();
+        $rows = self::signup_review_rows($filters);
+        $countries = self::signup_review_country_options();
+
+        echo '<div class="wrap"><h1>ABiT Signup Review</h1>';
+        echo '<p>Internal access request queue for admin review and lead qualification.</p>';
+        self::render_signup_review_filters($filters, $countries);
+        self::render_signup_review_table($rows);
+        echo '</div>';
+    }
+
+    private static function signup_review_filters_from_request(): array
+    {
+        $request = wp_unslash($_GET);
+        $status = isset($request['review_status']) ? sanitize_key((string) $request['review_status']) : '';
+        $country = isset($request['country_region']) ? strtoupper(sanitize_text_field((string) $request['country_region'])) : '';
+        $module = isset($request['erp_module']) ? sanitize_key((string) $request['erp_module']) : '';
+        $verification = isset($request['verification_state']) ? sanitize_key((string) $request['verification_state']) : '';
+
+        if (!in_array($status, self::review_status_options(), true)) {
+            $status = '';
+        }
+
+        if (!in_array($module, self::erp_module_options(), true)) {
+            $module = '';
+        }
+
+        if (!in_array($verification, ['verified', 'unverified'], true)) {
+            $verification = '';
+        }
+
+        return [
+            'review_status' => $status,
+            'country_region' => $country,
+            'erp_module' => $module,
+            'verification_state' => $verification,
+        ];
+    }
+
+    private static function signup_review_rows(array $filters): array
+    {
+        global $wpdb;
+
+        $where = ['1=1'];
+        $params = [];
+
+        if ($filters['review_status'] !== '') {
+            $where[] = 'ar.review_status = %s';
+            $params[] = $filters['review_status'];
+        }
+
+        if ($filters['country_region'] !== '') {
+            $where[] = 'ar.country_region = %s';
+            $params[] = $filters['country_region'];
+        }
+
+        if ($filters['erp_module'] !== '') {
+            $where[] = 'ar.erp_module_interest LIKE %s';
+            $params[] = '%' . $wpdb->esc_like($filters['erp_module']) . '%';
+        }
+
+        if ($filters['verification_state'] === 'verified') {
+            $where[] = 'ar.email_verified_at IS NOT NULL';
+        } elseif ($filters['verification_state'] === 'unverified') {
+            $where[] = 'ar.email_verified_at IS NULL';
+        }
+
+        $sql = 'SELECT ar.id, ar.user_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.persona, ar.review_status, ar.email_verified_at, ar.created_at, ar.updated_at, u.display_name AS owner_name, u.user_email AS owner_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ar.updated_at DESC, ar.created_at DESC LIMIT 200';
+
+        if (!empty($params)) {
+            $sql = $wpdb->prepare($sql, $params);
+        }
+
+        $rows = $wpdb->get_results($sql, ARRAY_A);
+        return is_array($rows) ? $rows : [];
+    }
+
+    private static function signup_review_country_options(): array
+    {
+        global $wpdb;
+        $countries = $wpdb->get_col('SELECT DISTINCT country_region FROM ' . self::table('access_requests') . " WHERE country_region <> '' ORDER BY country_region ASC");
+
+        return is_array($countries) ? array_values(array_filter(array_map('strval', $countries))) : [];
+    }
+
+    private static function render_signup_review_filters(array $filters, array $countries): void
+    {
+        echo '<form method="get" class="abit-signup-review-filters" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:16px 0;">';
+        echo '<input type="hidden" name="page" value="abit-signup-review" />';
+        self::render_signup_review_select('review_status', 'Status', $filters['review_status'], self::review_status_options(), true);
+        self::render_signup_review_select('country_region', 'Country', $filters['country_region'], $countries, true);
+        self::render_signup_review_select('erp_module', 'Module', $filters['erp_module'], self::erp_module_options(), true);
+        self::render_signup_review_select('verification_state', 'Verification', $filters['verification_state'], ['verified', 'unverified'], true);
+        submit_button('Filter', 'primary', '', false);
+        echo '<a class="button" href="' . esc_url(admin_url('tools.php?page=abit-signup-review')) . '">Clear</a>';
+        echo '</form>';
+    }
+
+    private static function render_signup_review_select(string $name, string $label, string $selected, array $options, bool $include_all): void
+    {
+        echo '<label for="' . esc_attr($name) . '"><span style="display:block;font-weight:600;margin-bottom:4px;">' . esc_html($label) . '</span>';
+        echo '<select id="' . esc_attr($name) . '" name="' . esc_attr($name) . '">';
+        if ($include_all) {
+            echo '<option value="">All</option>';
+        }
+
+        foreach ($options as $option) {
+            $option = (string) $option;
+            echo '<option value="' . esc_attr($option) . '"' . selected($selected, $option, false) . '>' . esc_html(self::signup_review_label($option)) . '</option>';
+        }
+
+        echo '</select></label>';
+    }
+
+    private static function render_signup_review_table(array $rows): void
+    {
+        echo '<table class="widefat fixed striped"><thead><tr>';
+        foreach (['Request', 'User', 'Company', 'Verification', 'Industry', 'Size', 'Country', 'Modules', 'Risk', 'Owner', 'Status'] as $heading) {
+            echo '<th scope="col">' . esc_html($heading) . '</th>';
+        }
+        echo '</tr></thead><tbody>';
+
+        if (empty($rows)) {
+            echo '<tr><td colspan="11">No signup access requests match these filters.</td></tr>';
+        } else {
+            foreach ($rows as $row) {
+                $modules = self::normalize_erp_module_interests(self::decode_list_value($row['erp_module_interest'] ?? null));
+                $owner = self::first_non_empty([$row['owner_name'] ?? null, $row['owner_email'] ?? null, 'User #' . (int) ($row['user_id'] ?? 0)]);
+
+                echo '<tr>';
+                echo '<td>' . esc_html('#' . (int) $row['id']) . '<br><small>' . esc_html((string) ($row['created_at'] ?? '')) . '</small></td>';
+                echo '<td>' . esc_html((string) ($row['full_name'] ?? '')) . '<br><small>' . esc_html(self::masked_email((string) ($row['business_email'] ?? ''))) . '</small></td>';
+                echo '<td>' . esc_html((string) ($row['company_name'] ?? '')) . '<br><small>' . esc_html((string) ($row['role'] ?? '')) . '</small></td>';
+                echo '<td>' . esc_html(empty($row['email_verified_at']) ? 'Unverified' : 'Verified') . '<br><small>' . esc_html((string) ($row['email_verified_at'] ?? '')) . '</small></td>';
+                echo '<td>' . esc_html(self::signup_review_label((string) ($row['industry'] ?? ''))) . '</td>';
+                echo '<td>' . esc_html(self::signup_review_label((string) ($row['company_size'] ?? ''))) . '</td>';
+                echo '<td>' . esc_html((string) ($row['country_region'] ?? '')) . '</td>';
+                echo '<td>' . esc_html(self::signup_review_module_summary($modules)) . '</td>';
+                echo '<td>' . esc_html(self::signup_review_risk($row, $modules)) . '</td>';
+                echo '<td>' . esc_html($owner) . '</td>';
+                echo '<td>' . esc_html(self::signup_review_label((string) ($row['review_status'] ?? ''))) . '</td>';
+                echo '</tr>';
+            }
+        }
+
+        echo '</tbody></table>';
+    }
+
+    private static function signup_review_module_summary(array $modules): string
+    {
+        if (empty($modules)) {
+            return 'None';
+        }
+
+        $labels = [];
+        foreach ($modules as $module) {
+            $labels[] = self::signup_review_label((string) $module);
+        }
+
+        return implode(', ', $labels);
+    }
+
+    private static function signup_review_risk(array $row, array $modules): string
+    {
+        $status = (string) ($row['review_status'] ?? '');
+        if ($status === self::REVIEW_STATUS_REJECTED) {
+            return 'High';
+        }
+
+        if (empty($row['email_verified_at'])) {
+            return 'Medium';
+        }
+
+        if (in_array('not_sure', $modules, true) || count($modules) >= 4 || (string) ($row['company_size'] ?? '') === '501_plus') {
+            return 'Review';
+        }
+
+        return 'Standard';
+    }
+
+    private static function signup_review_label(string $value): string
+    {
+        $labels = [
+            self::REVIEW_STATUS_PENDING_EMAIL => 'Pending email verification',
+            self::REVIEW_STATUS_ONBOARDING_REQUIRED => 'Onboarding required',
+            self::REVIEW_STATUS_PENDING_ADMIN_REVIEW => 'Pending admin review',
+            self::REVIEW_STATUS_APPROVED => 'Approved for MVP access',
+            self::REVIEW_STATUS_REJECTED => 'Rejected',
+            self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED => 'More information requested',
+            'verified' => 'Verified',
+            'unverified' => 'Unverified',
+            '1_10' => '1-10',
+            '11_50' => '11-50',
+            '51_200' => '51-200',
+            '201_500' => '201-500',
+            '501_plus' => '501+',
+            'professional_services' => 'Professional services',
+            'trading_distribution' => 'Trading and distribution',
+            'retail_ecommerce' => 'Retail and ecommerce',
+            'construction_real_estate' => 'Construction and real estate',
+            'hr_payroll' => 'HR and payroll',
+            'support_helpdesk' => 'Support or helpdesk',
+            'website_portal' => 'Website or portal',
+            'reports_analytics' => 'Reports and analytics',
+            'full_erp_evaluation' => 'Full ERP evaluation',
+            'not_sure' => 'Not sure',
+        ];
+
+        if ($value === '') {
+            return '';
+        }
+
+        return $labels[$value] ?? ucwords(str_replace('_', ' ', $value));
+    }
+
+    private static function review_status_options(): array
+    {
+        return [
+            self::REVIEW_STATUS_PENDING_EMAIL,
+            self::REVIEW_STATUS_ONBOARDING_REQUIRED,
+            self::REVIEW_STATUS_PENDING_ADMIN_REVIEW,
+            self::REVIEW_STATUS_APPROVED,
+            self::REVIEW_STATUS_REJECTED,
+            self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED,
+        ];
+    }
+
+    private static function erp_module_options(): array
+    {
+        return [
+            'accounting',
+            'crm',
+            'sales',
+            'buying',
+            'stock',
+            'manufacturing',
+            'projects',
+            'hr_payroll',
+            'support_helpdesk',
+            'website_portal',
+            'reports_analytics',
+            'integrations',
+            'full_erp_evaluation',
+            'not_sure',
+        ];
     }
 
     public static function register_routes(): void
