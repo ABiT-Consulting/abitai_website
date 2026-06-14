@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.1';
+    private const SCHEMA_VERSION = '2026-06-14.2';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
     private const REVIEW_STATUS_ONBOARDING_REQUIRED = 'onboarding_required';
@@ -58,6 +58,16 @@ final class ABiT_SaaS_Auth_API
                 'permission_callback' => '__return_true',
             ]
         );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            '/auth/me',
+            [
+                'methods' => WP_REST_Server::READABLE,
+                'callback' => [__CLASS__, 'me'],
+                'permission_callback' => [__CLASS__, 'require_authentication'],
+            ]
+        );
     }
 
     public static function handle_pretty_api_route(): void
@@ -68,14 +78,22 @@ final class ABiT_SaaS_Auth_API
             '/api/auth/register' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/register',
                 'callback' => [__CLASS__, 'register'],
+                'method' => 'POST',
             ],
             '/api/auth/login' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/login',
                 'callback' => [__CLASS__, 'login'],
+                'method' => 'POST',
             ],
             '/api/auth/logout' => [
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/logout',
                 'callback' => [__CLASS__, 'logout'],
+                'method' => 'POST',
+            ],
+            '/api/auth/me' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/auth/me',
+                'callback' => [__CLASS__, 'me'],
+                'method' => 'GET',
             ],
         ];
 
@@ -83,8 +101,9 @@ final class ABiT_SaaS_Auth_API
             return;
         }
 
-        if (strtoupper($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            header('Allow: POST');
+        $expected_method = $routes[$path]['method'];
+        if (strtoupper($_SERVER['REQUEST_METHOD'] ?? '') !== $expected_method) {
+            header('Allow: ' . $expected_method);
             wp_send_json(
                 ['message' => 'Method not allowed.'],
                 405
@@ -92,8 +111,12 @@ final class ABiT_SaaS_Auth_API
         }
 
         $payload = json_decode(file_get_contents('php://input'), true);
-        $request = new WP_REST_Request('POST', $routes[$path]['rest_path']);
-        $request->set_body_params(is_array($payload) ? $payload : []);
+        $request = new WP_REST_Request($expected_method, $routes[$path]['rest_path']);
+        if ($expected_method === 'GET') {
+            $request->set_query_params(wp_unslash($_GET));
+        } else {
+            $request->set_body_params(is_array($payload) ? $payload : []);
+        }
         $request->set_header('content-type', $_SERVER['CONTENT_TYPE'] ?? 'application/json');
 
         $response = rest_ensure_response(call_user_func($routes[$path]['callback'], $request));
@@ -139,6 +162,15 @@ final class ABiT_SaaS_Auth_API
                 company_name VARCHAR(160) NOT NULL,
                 country_region VARCHAR(16) NOT NULL,
                 intended_use_case TEXT NOT NULL,
+                role VARCHAR(120) NULL,
+                company_size VARCHAR(32) NULL,
+                industry VARCHAR(64) NULL,
+                primary_workflow TEXT NULL,
+                erp_module_interest LONGTEXT NULL,
+                current_system VARCHAR(160) NULL,
+                timeline VARCHAR(32) NULL,
+                notes TEXT NULL,
+                persona VARCHAR(64) NULL,
                 review_status VARCHAR(64) NOT NULL,
                 email_verified_at DATETIME NULL,
                 terms_privacy_accepted_at DATETIME NULL,
@@ -151,7 +183,9 @@ final class ABiT_SaaS_Auth_API
                 UNIQUE KEY business_email (business_email),
                 KEY user_id (user_id),
                 KEY company_id (company_id),
-                KEY review_status (review_status)
+                KEY review_status (review_status),
+                KEY company_size (company_size),
+                KEY industry (industry)
             ) {$charset_collate};
         ");
 
@@ -359,6 +393,69 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
+    public static function me(WP_REST_Request $request): WP_REST_Response
+    {
+        self::maybe_install_schema();
+
+        $user_id = self::current_authenticated_user_id();
+        if ($user_id <= 0) {
+            return self::not_authenticated_response();
+        }
+
+        $user = get_userdata($user_id);
+        if (!$user instanceof WP_User) {
+            wp_clear_auth_cookie();
+            wp_set_current_user(0);
+            return self::not_authenticated_response();
+        }
+
+        $access_request = self::access_request_for_user($user);
+        $account_state = self::account_state_from_access_request($user, $access_request);
+        $onboarding = self::onboarding_payload($user, $access_request, $account_state);
+
+        return new WP_REST_Response(
+            [
+                'authenticated' => true,
+                'user' => self::public_user_payload($user, $access_request),
+                'verification' => [
+                    'email_verified' => $account_state['email_verified'],
+                    'status' => $account_state['email_verified'] ? 'verified' : 'pending',
+                    'email_verified_at' => self::nullable_datetime($access_request['email_verified_at'] ?? null),
+                ],
+                'company' => self::company_payload($user, $access_request),
+                'role' => $onboarding['role'],
+                'onboarding' => $onboarding,
+                'access_request' => [
+                    'id' => is_array($access_request) ? (int) $access_request['id'] : null,
+                    'status' => $account_state['review_status'],
+                    'created_at' => self::nullable_datetime($access_request['created_at'] ?? null),
+                    'updated_at' => self::nullable_datetime($access_request['updated_at'] ?? null),
+                ],
+                'gate' => [
+                    'state' => $account_state['state'],
+                    'route' => $account_state['route'],
+                    'next_path' => self::path_for_review_status($account_state['review_status'], $account_state['locked']),
+                    'product_access' => !$account_state['locked'] && $account_state['review_status'] === self::REVIEW_STATUS_APPROVED,
+                    'locked' => $account_state['locked'],
+                ],
+            ],
+            200
+        );
+    }
+
+    public static function require_authentication()
+    {
+        if (self::current_authenticated_user_id() > 0) {
+            return true;
+        }
+
+        return new WP_Error(
+            'rest_not_logged_in',
+            'Authentication is required.',
+            ['status' => 401]
+        );
+    }
+
     private static function request_payload(WP_REST_Request $request): array
     {
         $params = $request->get_json_params();
@@ -453,6 +550,18 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
+    private static function not_authenticated_response(): WP_REST_Response
+    {
+        return new WP_REST_Response(
+            [
+                'message' => 'Authentication is required.',
+                'code' => 'not_authenticated',
+                'authenticated' => false,
+            ],
+            401
+        );
+    }
+
     private static function current_authenticated_user_id(): int
     {
         $user_id = get_current_user_id();
@@ -471,37 +580,192 @@ final class ABiT_SaaS_Auth_API
 
     private static function account_state_for_user(WP_User $user): array
     {
-        global $wpdb;
+        return self::account_state_from_access_request($user, self::access_request_for_user($user));
+    }
 
-        $access_request = $wpdb->get_row(
-            $wpdb->prepare(
-                'SELECT id, company_id, review_status, email_verified_at FROM ' . self::table('access_requests') . ' WHERE user_id = %d OR business_email = %s ORDER BY id DESC LIMIT 1',
-                $user->ID,
-                $user->user_email
-            ),
-            ARRAY_A
-        );
-
+    private static function account_state_from_access_request(WP_User $user, ?array $access_request): array
+    {
         $review_status = is_array($access_request) && !empty($access_request['review_status'])
             ? (string) $access_request['review_status']
-            : (string) get_user_meta($user->ID, 'abit_saas_review_status', true);
+            : self::stored_review_status_for_user($user);
 
         if ($review_status === '') {
             $review_status = self::REVIEW_STATUS_PENDING_EMAIL;
         }
 
         $locked = self::is_user_locked($user);
-        $state = self::state_for_review_status($review_status);
+        $state = $locked
+            ? ['state' => 'account_locked', 'route' => 'locked']
+            : self::state_for_review_status($review_status);
 
         return [
             'access_request_id' => is_array($access_request) ? (int) $access_request['id'] : null,
             'company_id' => is_array($access_request) ? (int) $access_request['company_id'] : null,
             'review_status' => $review_status,
-            'email_verified' => is_array($access_request) && !empty($access_request['email_verified_at']),
+            'email_verified' => self::email_verified_for_user($user, $access_request),
             'state' => $state['state'],
             'route' => $state['route'],
             'locked' => $locked,
         ];
+    }
+
+    private static function access_request_for_user(WP_User $user): ?array
+    {
+        global $wpdb;
+
+        $access_request = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
+                $user->ID,
+                $user->user_email
+            ),
+            ARRAY_A
+        );
+
+        return is_array($access_request) ? $access_request : null;
+    }
+
+    private static function stored_review_status_for_user(WP_User $user): string
+    {
+        $status = (string) get_user_meta($user->ID, 'abit_saas_review_status', true);
+        if ($status !== '') {
+            return $status;
+        }
+
+        return (string) get_user_meta($user->ID, 'abitai_access_request_status', true);
+    }
+
+    private static function email_verified_for_user(WP_User $user, ?array $access_request): bool
+    {
+        if (is_array($access_request)) {
+            return !empty($access_request['email_verified_at']);
+        }
+
+        return get_user_meta($user->ID, 'abitai_email_verified_at', true) !== '';
+    }
+
+    private static function public_user_payload(WP_User $user, ?array $access_request): array
+    {
+        return [
+            'id' => (int) $user->ID,
+            'email' => (string) $user->user_email,
+            'display_name' => (string) $user->display_name,
+            'full_name' => self::first_non_empty([
+                $access_request['full_name'] ?? null,
+                trim((string) $user->first_name . ' ' . (string) $user->last_name),
+                $user->display_name,
+            ]),
+            'wp_roles' => array_values(array_map('strval', (array) $user->roles)),
+        ];
+    }
+
+    private static function company_payload(WP_User $user, ?array $access_request): array
+    {
+        return [
+            'id' => is_array($access_request) && !empty($access_request['company_id']) ? (int) $access_request['company_id'] : null,
+            'name' => self::first_non_empty([
+                $access_request['company_record_name'] ?? null,
+                $access_request['company_name'] ?? null,
+                get_user_meta($user->ID, 'abit_saas_company_name', true),
+                get_user_meta($user->ID, 'abitai_company_name', true),
+            ]),
+            'country_region' => self::first_non_empty([
+                $access_request['company_record_country_region'] ?? null,
+                $access_request['country_region'] ?? null,
+                get_user_meta($user->ID, 'abitai_country_region', true),
+            ]),
+            'company_size' => self::first_non_empty([
+                $access_request['company_size'] ?? null,
+                get_user_meta($user->ID, 'abitai_company_size', true),
+            ]),
+            'industry' => self::first_non_empty([
+                $access_request['industry'] ?? null,
+                get_user_meta($user->ID, 'abitai_industry', true),
+            ]),
+            'status' => self::first_non_empty([
+                $access_request['company_record_status'] ?? null,
+            ]),
+        ];
+    }
+
+    private static function onboarding_payload(WP_User $user, ?array $access_request, array $account_state): array
+    {
+        $module_interest_value = $access_request['erp_module_interest'] ?? null;
+        if (empty($module_interest_value)) {
+            $module_interest_value = get_user_meta($user->ID, 'abitai_erp_module_interest', true);
+        }
+        $module_interest = self::decode_list_value($module_interest_value);
+        $primary_workflow = self::first_non_empty([
+            $access_request['primary_workflow'] ?? null,
+            get_user_meta($user->ID, 'abitai_business_description', true),
+        ]);
+        $role = self::first_non_empty([
+            $access_request['role'] ?? null,
+            get_user_meta($user->ID, 'abitai_role', true),
+            get_user_meta($user->ID, 'abitai_job_title', true),
+        ]);
+        $company_size = self::first_non_empty([
+            $access_request['company_size'] ?? null,
+            get_user_meta($user->ID, 'abitai_company_size', true),
+        ]);
+        $industry = self::first_non_empty([
+            $access_request['industry'] ?? null,
+            get_user_meta($user->ID, 'abitai_industry', true),
+        ]);
+
+        $required_fields_complete = $role !== ''
+            && $company_size !== ''
+            && $industry !== ''
+            && $primary_workflow !== ''
+            && !empty($module_interest);
+        $review_status = $account_state['review_status'];
+        $complete_statuses = [
+            self::REVIEW_STATUS_PENDING_ADMIN_REVIEW,
+            self::REVIEW_STATUS_APPROVED,
+            self::REVIEW_STATUS_REJECTED,
+        ];
+
+        return [
+            'status' => self::onboarding_status($review_status, $required_fields_complete),
+            'completed' => in_array($review_status, $complete_statuses, true),
+            'required_fields_complete' => $required_fields_complete,
+            'role' => $role,
+            'company_size' => $company_size,
+            'industry' => $industry,
+            'primary_workflow_provided' => $primary_workflow !== '',
+            'erp_module_interest' => $module_interest,
+            'current_system' => self::first_non_empty([
+                $access_request['current_system'] ?? null,
+            ]),
+            'timeline' => self::first_non_empty([
+                $access_request['timeline'] ?? null,
+            ]),
+        ];
+    }
+
+    private static function onboarding_status(string $review_status, bool $required_fields_complete): string
+    {
+        if ($review_status === self::REVIEW_STATUS_PENDING_EMAIL) {
+            return 'blocked_until_email_verified';
+        }
+
+        if ($review_status === self::REVIEW_STATUS_ONBOARDING_REQUIRED || $review_status === self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED) {
+            return $required_fields_complete ? 'ready_to_submit' : 'required';
+        }
+
+        if ($review_status === self::REVIEW_STATUS_PENDING_ADMIN_REVIEW) {
+            return 'submitted_for_review';
+        }
+
+        if ($review_status === self::REVIEW_STATUS_APPROVED) {
+            return 'approved';
+        }
+
+        if ($review_status === self::REVIEW_STATUS_REJECTED) {
+            return 'closed';
+        }
+
+        return 'required';
     }
 
     private static function state_for_review_status(string $review_status): array
@@ -516,6 +780,79 @@ final class ABiT_SaaS_Auth_API
         ];
 
         return $states[$review_status] ?? ['state' => 'review_pending', 'route' => 'review_pending'];
+    }
+
+    private static function path_for_route(string $route): string
+    {
+        $paths = [
+            'verify_email' => '/auth/verify',
+            'onboarding' => '/auth/onboarding',
+            'review_pending' => '/auth/review-pending',
+            'app' => '/dashboard',
+            'rejected' => '/auth/rejected',
+            'locked' => '/auth/sign-in',
+        ];
+
+        return $paths[$route] ?? '/dashboard';
+    }
+
+    private static function path_for_review_status(string $review_status, bool $locked = false): string
+    {
+        if ($locked) {
+            return self::path_for_route('locked');
+        }
+
+        $paths = [
+            self::REVIEW_STATUS_PENDING_EMAIL => '/auth/verify',
+            self::REVIEW_STATUS_ONBOARDING_REQUIRED => '/auth/onboarding',
+            self::REVIEW_STATUS_PENDING_ADMIN_REVIEW => '/auth/review-pending',
+            self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED => '/auth/more-information',
+            self::REVIEW_STATUS_APPROVED => '/dashboard',
+            self::REVIEW_STATUS_REJECTED => '/auth/rejected',
+        ];
+
+        return $paths[$review_status] ?? '/dashboard';
+    }
+
+    private static function first_non_empty(array $values): string
+    {
+        foreach ($values as $value) {
+            if (is_array($value)) {
+                continue;
+            }
+
+            $value = trim((string) $value);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private static function decode_list_value($value): array
+    {
+        if (is_array($value)) {
+            return array_values(array_filter(array_map('strval', $value), 'strlen'));
+        }
+
+        $value = trim((string) $value);
+        if ($value === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+        if (is_array($decoded)) {
+            return array_values(array_filter(array_map('strval', $decoded), 'strlen'));
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', $value)), 'strlen'));
+    }
+
+    private static function nullable_datetime($value): ?string
+    {
+        $value = trim((string) $value);
+        return $value === '' ? null : $value;
     }
 
     private static function is_user_locked(WP_User $user): bool
