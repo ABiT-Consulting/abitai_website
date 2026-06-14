@@ -135,7 +135,7 @@ Success copy:
 
 ## Forgot Password State
 
-The forgot password link opens a reset request panel or page. This state must not reveal whether an account exists.
+The forgot password link opens a reset request panel or page. This state must not reveal whether an account exists. The complete recovery flow, including token validation, expired or invalid links, and success state, is defined in `docs/forgot-reset-password-wireframes.md`.
 
 ```text
 +--------------------------------------------------------------+
