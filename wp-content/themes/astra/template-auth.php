@@ -79,8 +79,13 @@ get_header();
 					case 'review':
 					case 'more-info':
 					case 'rejected':
+					case 'dashboard':
 					case 'app':
-						abitai_auth_render_status_slot( $route_key );
+						if ( 'dashboard' === $route_key ) {
+							abitai_auth_render_dashboard_gate_slot();
+						} else {
+							abitai_auth_render_status_slot( $route_key );
+						}
 						break;
 					case 'sign-in':
 					default:
@@ -183,6 +188,74 @@ function abitai_auth_render_status_slot( $route_key ) {
 	</div>
 	<div class="abit-auth-actions">
 		<a class="abit-auth-button abit-auth-button--primary" href="<?php echo esc_url( 'rejected' === $route_key ? 'mailto:support@abit.ai' : home_url( '/' ) ); ?>"><?php echo esc_html( $copy['action'] ); ?></a>
+		<a class="abit-auth-button abit-auth-button--secondary" href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>"><?php esc_html_e( 'Back to sign in', 'astra' ); ?></a>
+	</div>
+	<?php
+}
+
+function abitai_auth_render_dashboard_gate_slot() {
+	$request = function_exists( 'abitai_auth_get_dashboard_request' ) ? abitai_auth_get_dashboard_request() : array(
+		'status'       => 'onboarding_required',
+		'status_label' => __( 'Company profile incomplete', 'astra' ),
+		'email'        => '',
+		'company_name' => '',
+	);
+	$gate    = function_exists( 'abitai_auth_get_dashboard_gate' ) ? abitai_auth_get_dashboard_gate( $request ) : array(
+		'profile_state'        => __( 'Incomplete', 'astra' ),
+		'profile_variant'      => 'pending',
+		'profile_description'  => __( 'Complete the required company profile fields before admin review can begin.', 'astra' ),
+		'provisioning_state'   => __( 'Blocked', 'astra' ),
+		'provisioning_variant' => 'rejected',
+		'next_action'          => __( 'Complete company profile', 'astra' ),
+		'next_href'            => home_url( '/auth/onboarding' ),
+		'next_variant'         => 'primary',
+		'alert_variant'        => 'info',
+		'alert_summary'        => __( 'Company profile completion required.', 'astra' ),
+		'alert_body'           => __( 'Your email is verified. Complete your company profile so the abit.ai team can review the access request.', 'astra' ),
+	);
+	$email        = isset( $request['email'] ) && '' !== $request['email'] ? $request['email'] : __( 'Signed-in account', 'astra' );
+	$company_name = isset( $request['company_name'] ) && '' !== $request['company_name'] ? $request['company_name'] : __( 'Not provided yet', 'astra' );
+	?>
+	<div class="abit-auth-alert abit-auth-alert--<?php echo esc_attr( $gate['alert_variant'] ); ?>" role="status" tabindex="-1" data-auth-autofocus>
+		<strong><?php echo esc_html( $gate['alert_summary'] ); ?></strong>
+		<span><?php echo esc_html( $gate['alert_body'] ); ?></span>
+	</div>
+
+	<div class="abit-auth-dashboard-summary" aria-label="<?php echo esc_attr__( 'Access request summary', 'astra' ); ?>">
+		<div class="abit-auth-status-box">
+			<span><?php esc_html_e( 'Business email', 'astra' ); ?></span>
+			<strong><?php echo esc_html( $email ); ?></strong>
+		</div>
+		<div class="abit-auth-status-box">
+			<span><?php esc_html_e( 'Company', 'astra' ); ?></span>
+			<strong><?php echo esc_html( $company_name ); ?></strong>
+		</div>
+		<div class="abit-auth-status-box">
+			<span><?php esc_html_e( 'Request status', 'astra' ); ?></span>
+			<strong><?php echo esc_html( $request['status_label'] ); ?></strong>
+		</div>
+	</div>
+
+	<div class="abit-auth-dashboard-gate">
+		<section class="abit-auth-gate-panel">
+			<div class="abit-auth-gate-panel__heading">
+				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( $gate['profile_variant'] ); ?>"><?php echo esc_html( $gate['profile_state'] ); ?></span>
+				<h3><?php esc_html_e( 'Company profile status', 'astra' ); ?></h3>
+			</div>
+			<p><?php echo esc_html( $gate['profile_description'] ); ?></p>
+		</section>
+
+		<section class="abit-auth-gate-panel">
+			<div class="abit-auth-gate-panel__heading">
+				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( $gate['provisioning_variant'] ); ?>"><?php echo esc_html( $gate['provisioning_state'] ); ?></span>
+				<h3><?php esc_html_e( 'Provisioning status', 'astra' ); ?></h3>
+			</div>
+			<p><?php esc_html_e( 'Workspace provisioning follows verification, profile completion, and admin approval.', 'astra' ); ?></p>
+		</section>
+	</div>
+
+	<div class="abit-auth-actions">
+		<a class="abit-auth-button abit-auth-button--<?php echo esc_attr( 'secondary' === $gate['next_variant'] ? 'secondary' : 'primary' ); ?>" href="<?php echo esc_url( $gate['next_href'] ); ?>"><?php echo esc_html( $gate['next_action'] ); ?></a>
 		<a class="abit-auth-button abit-auth-button--secondary" href="<?php echo esc_url( home_url( '/auth/sign-in' ) ); ?>"><?php esc_html_e( 'Back to sign in', 'astra' ); ?></a>
 	</div>
 	<?php

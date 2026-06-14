@@ -65,6 +65,12 @@ if ( ! function_exists( 'abitai_auth_get_routes' ) ) {
 				'eyebrow'     => __( 'Request decision', 'astra' ),
 				'description' => __( 'This account does not currently have product access.', 'astra' ),
 			),
+			'dashboard' => array(
+				'path'        => '/dashboard',
+				'title'       => __( 'Access request dashboard', 'astra' ),
+				'eyebrow'     => __( 'Dashboard gate', 'astra' ),
+				'description' => __( 'Review company profile status, provisioning status, and the next action for your access request.', 'astra' ),
+			),
 			'app'     => array(
 				'path'        => '/auth/app',
 				'title'       => __( 'Workspace access ready', 'astra' ),
@@ -109,7 +115,9 @@ if ( ! function_exists( 'abitai_auth_get_current_route_key' ) ) {
 			'/auth/review-pending' => 'review',
 			'/auth/more-information' => 'more-info',
 			'/auth/rejected'       => 'rejected',
-			'/auth/app'            => 'app',
+			'/auth/dashboard'      => 'dashboard',
+			'/dashboard'           => 'dashboard',
+			'/auth/app'            => 'dashboard',
 		);
 
 		return isset( $aliases[ $path ] ) ? $aliases[ $path ] : '';
@@ -128,6 +136,10 @@ if ( ! function_exists( 'abitai_auth_template_include' ) ) {
 
 		if ( '' === $route_key ) {
 			return $template;
+		}
+
+		if ( 'dashboard' === $route_key && function_exists( 'abitai_auth_maybe_redirect_dashboard_gate' ) ) {
+			abitai_auth_maybe_redirect_dashboard_gate();
 		}
 
 		$GLOBALS['abitai_auth_route_key'] = $route_key;

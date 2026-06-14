@@ -1227,6 +1227,48 @@ body.aierp-front-page * {
 	overflow-wrap: anywhere;
 }
 
+.abit-auth-dashboard-summary {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 10px;
+}
+
+.abit-auth-dashboard-gate {
+	display: grid;
+	gap: 12px;
+}
+
+.abit-auth-gate-panel {
+	display: grid;
+	gap: 10px;
+	padding: 16px;
+	background: #ffffff;
+	border: 1px solid var(--auth-border);
+	border-radius: 8px;
+	box-shadow: 0 10px 24px rgba(16, 24, 40, 0.05);
+}
+
+.abit-auth-gate-panel__heading {
+	display: grid;
+	gap: 8px;
+}
+
+.abit-auth-gate-panel h3 {
+	margin: 0;
+	color: var(--auth-ink);
+	font-size: 1.05rem;
+	line-height: 1.25;
+	letter-spacing: 0;
+	text-transform: none;
+}
+
+.abit-auth-gate-panel p {
+	margin: 0;
+	color: var(--auth-muted);
+	font-size: 0.92rem;
+	line-height: 1.55;
+}
+
 .abit-auth-header {
 	max-width: 720px;
 	margin-bottom: 28px;
