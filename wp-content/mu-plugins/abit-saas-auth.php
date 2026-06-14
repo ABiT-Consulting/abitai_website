@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.10';
+    private const SCHEMA_VERSION = '2026-06-14.11';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -29,6 +29,11 @@ final class ABiT_SaaS_Auth_API
     private const WORKSPACE_MEMBER_ROLE_OWNER = 'owner';
     private const WORKSPACE_MEMBER_ROLE_MEMBER = 'member';
     private const CONSENT_RETENTION_RULE = 'active_plus_7_years_after_closure';
+    private const HIGH_RESEND_SENT_THRESHOLD = 4;
+    private const HIGH_RESEND_THROTTLED_THRESHOLD = 2;
+    private const HIGH_FAILED_LOGIN_THRESHOLD = 5;
+    private const SHARED_IP_REQUEST_THRESHOLD = 3;
+    private const SHARED_DOMAIN_REQUEST_THRESHOLD = 3;
 
     public static function bootstrap(): void
     {
@@ -302,7 +307,7 @@ final class ABiT_SaaS_Auth_API
             $where[] = 'ar.email_verified_at IS NULL';
         }
 
-        $sql = 'SELECT ar.id, ar.user_id, ar.admin_owner_user_id, ar.handoff_team, ar.handoff_priority, ar.handoff_next_action, ar.handoff_follow_up_date, ar.handoff_queue_status, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.persona, ar.review_status, ar.email_verified_at, ar.created_at, ar.updated_at, u.display_name AS owner_name, u.user_email AS owner_email, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ar.handoff_follow_up_date IS NULL ASC, ar.handoff_follow_up_date ASC, ar.updated_at DESC, ar.created_at DESC LIMIT 200';
+        $sql = 'SELECT ar.id, ar.user_id, ar.admin_owner_user_id, ar.handoff_team, ar.handoff_priority, ar.handoff_next_action, ar.handoff_follow_up_date, ar.handoff_queue_status, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.persona, ar.review_status, ar.email_verified_at, ar.email_delivery_sent_count, ar.email_resend_throttled_count, ar.failed_login_count, ar.last_failed_login_at, ar.created_at, ar.updated_at, u.display_name AS owner_name, u.user_email AS owner_email, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email, (SELECT COUNT(*) FROM ' . self::table('access_requests') . ' ar2 WHERE ar2.id <> ar.id AND LOWER(TRIM(ar2.company_name)) = LOWER(TRIM(ar.company_name))) AS duplicate_company_count, (SELECT COUNT(*) FROM ' . self::table('access_requests') . ' ar3 WHERE ar3.id <> ar.id AND SUBSTRING_INDEX(LOWER(ar3.business_email), \'@\', -1) = SUBSTRING_INDEX(LOWER(ar.business_email), \'@\', -1)) AS same_domain_request_count, (SELECT COUNT(DISTINCT c2.access_request_id) FROM ' . self::table('consent_audit_records') . ' c1 INNER JOIN ' . self::table('consent_audit_records') . ' c2 ON c2.ip_hash = c1.ip_hash AND c2.access_request_id <> c1.access_request_id WHERE c1.access_request_id = ar.id AND c1.ip_hash <> \'\') AS shared_ip_request_count FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ar.handoff_follow_up_date IS NULL ASC, ar.handoff_follow_up_date ASC, ar.updated_at DESC, ar.created_at DESC LIMIT 200';
 
         if (!empty($params)) {
             $sql = $wpdb->prepare($sql, $params);
@@ -383,7 +388,7 @@ final class ABiT_SaaS_Auth_API
                 echo '<td>' . esc_html(self::signup_review_label((string) ($row['company_size'] ?? ''))) . '</td>';
                 echo '<td>' . esc_html((string) ($row['country_region'] ?? '')) . '</td>';
                 echo '<td>' . esc_html(self::signup_review_module_summary($modules)) . '</td>';
-                echo '<td>' . esc_html(self::signup_review_risk($row, $modules)) . '</td>';
+                echo '<td>' . esc_html(self::signup_review_risk_summary($row, $modules)) . '</td>';
                 echo '<td>' . esc_html(self::signup_review_handoff_summary($row, $owner)) . '</td>';
                 echo '<td>' . esc_html(self::signup_review_label((string) ($row['review_status'] ?? ''))) . '</td>';
                 echo '</tr>';
@@ -427,6 +432,7 @@ final class ABiT_SaaS_Auth_API
         $consent = self::signup_review_consent_audit((int) $access_request['id']);
         $email_events = self::signup_review_email_events((int) $access_request['id']);
         $provisioning_request = self::provisioning_request_for_access_request((int) $access_request['id']);
+        $risk_indicators = self::signup_review_risk_indicators($access_request, $modules);
 
         echo '<p>Internal customer context for admin review. Passwords, raw tokens, cookies, sessions, and verification token hashes are not displayed.</p>';
         echo '<style>.abit-profile-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:16px}.abit-profile-panel{background:#fff;border:1px solid #c3c4c7;padding:16px}.abit-profile-panel h2{margin-top:0}.abit-profile-panel dl{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin:0}.abit-profile-panel dt{font-weight:600}.abit-profile-panel dd{margin:0;overflow-wrap:anywhere}.abit-profile-list{margin:0}.abit-profile-list li{margin-bottom:6px}.abit-readiness-pass{color:#008a20;font-weight:600}.abit-readiness-fail{color:#b32d2e;font-weight:600}.abit-profile-notes{white-space:pre-wrap}</style>';
@@ -480,6 +486,17 @@ final class ABiT_SaaS_Auth_API
             ]
         );
         self::render_signup_profile_panel(
+            'Risk Indicators',
+            [
+                'Risk level' => self::signup_review_risk_level($risk_indicators),
+                'Indicators' => empty($risk_indicators) ? 'None' : implode('; ', $risk_indicators),
+                'Email domain' => self::email_domain((string) ($access_request['business_email'] ?? '')),
+                'Failed logins' => (int) ($access_request['failed_login_count'] ?? 0) > 0
+                    ? (int) $access_request['failed_login_count'] . ' total; last at ' . self::nullable_datetime($access_request['last_failed_login_at'] ?? null)
+                    : 'None recorded',
+            ]
+        );
+        self::render_signup_profile_panel(
             'Provisioning Readiness',
             [
                 'Eligible' => is_array($provisioning) && !empty($provisioning['eligible']) ? 'Yes' : 'No',
@@ -507,7 +524,7 @@ final class ABiT_SaaS_Auth_API
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.handoff_team, ar.handoff_priority, ar.handoff_next_action, ar.handoff_follow_up_date, ar.source_campaign, ar.handoff_notes, ar.handoff_queue_status, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status, u.user_login, u.user_email AS owner_email, u.display_name AS owner_name, u.user_registered, u.user_status, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email, ru.display_name AS reviewer_name, ru.user_email AS reviewer_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id LEFT JOIN ' . $wpdb->users . ' ru ON ru.ID = ar.admin_reviewed_by WHERE ar.id = %d LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.handoff_team, ar.handoff_priority, ar.handoff_next_action, ar.handoff_follow_up_date, ar.source_campaign, ar.handoff_notes, ar.handoff_queue_status, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.failed_login_count, ar.last_failed_login_at, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status, u.user_login, u.user_email AS owner_email, u.display_name AS owner_name, u.user_registered, u.user_status, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email, ru.display_name AS reviewer_name, ru.user_email AS reviewer_email, (SELECT COUNT(*) FROM ' . self::table('access_requests') . ' ar2 WHERE ar2.id <> ar.id AND LOWER(TRIM(ar2.company_name)) = LOWER(TRIM(ar.company_name))) AS duplicate_company_count, (SELECT COUNT(*) FROM ' . self::table('access_requests') . ' ar3 WHERE ar3.id <> ar.id AND SUBSTRING_INDEX(LOWER(ar3.business_email), \'@\', -1) = SUBSTRING_INDEX(LOWER(ar.business_email), \'@\', -1)) AS same_domain_request_count, (SELECT COUNT(DISTINCT c2.access_request_id) FROM ' . self::table('consent_audit_records') . ' c1 INNER JOIN ' . self::table('consent_audit_records') . ' c2 ON c2.ip_hash = c1.ip_hash AND c2.access_request_id <> c1.access_request_id WHERE c1.access_request_id = ar.id AND c1.ip_hash <> \'\') AS shared_ip_request_count FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id LEFT JOIN ' . $wpdb->users . ' ru ON ru.ID = ar.admin_reviewed_by WHERE ar.id = %d LIMIT 1',
                 $access_request_id
             ),
             ARRAY_A
@@ -939,7 +956,17 @@ final class ABiT_SaaS_Auth_API
         return implode(', ', $labels);
     }
 
-    private static function signup_review_risk(array $row, array $modules): string
+    private static function signup_review_risk_summary(array $row, array $modules): string
+    {
+        $indicators = self::signup_review_risk_indicators($row, $modules);
+        if (empty($indicators)) {
+            return self::signup_review_risk_baseline($row, $modules);
+        }
+
+        return self::signup_review_risk_level($indicators) . ': ' . implode('; ', array_slice($indicators, 0, 3));
+    }
+
+    private static function signup_review_risk_baseline(array $row, array $modules): string
     {
         $status = (string) ($row['review_status'] ?? '');
         if ($status === self::REVIEW_STATUS_REJECTED) {
@@ -955,6 +982,72 @@ final class ABiT_SaaS_Auth_API
         }
 
         return 'Standard';
+    }
+
+    private static function signup_review_risk_level(array $indicators): string
+    {
+        if (empty($indicators)) {
+            return 'Standard';
+        }
+
+        foreach ($indicators as $indicator) {
+            if (preg_match('/^(High|Disposable|Suspicious)/', $indicator)) {
+                return 'High';
+            }
+        }
+
+        return 'Review';
+    }
+
+    private static function signup_review_risk_indicators(array $row, array $modules): array
+    {
+        $indicators = [];
+        $email = (string) ($row['business_email'] ?? '');
+        $domain = self::email_domain($email);
+
+        if ($domain !== '' && self::is_disposable_email_domain($domain)) {
+            $indicators[] = 'Disposable email domain: ' . $domain;
+        }
+
+        if ($domain !== '' && self::is_suspicious_email_domain($domain)) {
+            $indicators[] = 'Suspicious email domain: ' . $domain;
+        }
+
+        $sent_count = (int) ($row['email_delivery_sent_count'] ?? 0);
+        $throttled_count = (int) ($row['email_resend_throttled_count'] ?? 0);
+        if ($sent_count >= self::HIGH_RESEND_SENT_THRESHOLD || $throttled_count >= self::HIGH_RESEND_THROTTLED_THRESHOLD) {
+            $indicators[] = 'High resend activity: ' . $sent_count . ' sent, ' . $throttled_count . ' throttled';
+        }
+
+        $failed_login_count = (int) ($row['failed_login_count'] ?? 0);
+        if ($failed_login_count >= self::HIGH_FAILED_LOGIN_THRESHOLD) {
+            $indicators[] = 'High failed login count: ' . $failed_login_count;
+        }
+
+        $shared_ip_count = (int) ($row['shared_ip_request_count'] ?? 0);
+        if ($shared_ip_count >= self::SHARED_IP_REQUEST_THRESHOLD) {
+            $indicators[] = 'Suspicious signup IP reuse: ' . $shared_ip_count . ' other requests';
+        }
+
+        $same_domain_count = (int) ($row['same_domain_request_count'] ?? 0);
+        if ($same_domain_count >= self::SHARED_DOMAIN_REQUEST_THRESHOLD) {
+            $indicators[] = 'Repeated email domain: ' . $same_domain_count . ' other requests';
+        }
+
+        $duplicate_company_count = (int) ($row['duplicate_company_count'] ?? 0);
+        if ($duplicate_company_count > 0) {
+            $indicators[] = 'Duplicate company hint: ' . $duplicate_company_count . ' matching request' . ($duplicate_company_count === 1 ? '' : 's');
+        }
+
+        if (empty($row['email_verified_at'])) {
+            $indicators[] = 'Unverified email';
+        }
+
+        if (in_array('not_sure', $modules, true) || count($modules) >= 4) {
+            $indicators[] = 'Broad or unclear module interest';
+        }
+
+        return $indicators;
     }
 
     private static function signup_review_label(string $value): string
@@ -1321,6 +1414,8 @@ final class ABiT_SaaS_Auth_API
                 email_delivery_bounced_count INT UNSIGNED NOT NULL DEFAULT 0,
                 email_token_expired_count INT UNSIGNED NOT NULL DEFAULT 0,
                 email_resend_throttled_count INT UNSIGNED NOT NULL DEFAULT 0,
+                failed_login_count INT UNSIGNED NOT NULL DEFAULT 0,
+                last_failed_login_at DATETIME NULL,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
                 PRIMARY KEY  (id),
@@ -1336,6 +1431,8 @@ final class ABiT_SaaS_Auth_API
                 KEY admin_decision (admin_decision),
                 KEY provisioning_readiness_status (provisioning_readiness_status),
                 KEY email_delivery_status (email_delivery_status),
+                KEY failed_login_count (failed_login_count),
+                KEY last_failed_login_at (last_failed_login_at),
                 KEY workspace_slug_override (workspace_slug_override),
                 KEY company_size (company_size),
                 KEY industry (industry)
@@ -1633,6 +1730,7 @@ final class ABiT_SaaS_Auth_API
         $user = get_user_by('email', $email);
 
         if (!$user instanceof WP_User || !wp_check_password($password, $user->user_pass, $user->ID)) {
+            self::record_failed_login_attempt($email);
             self::audit_event(
                 'auth_login_failed',
                 [
@@ -1652,6 +1750,7 @@ final class ABiT_SaaS_Auth_API
         $account_state = self::account_state_for_user($user);
         if (!empty($account_state['locked'])) {
             wp_clear_auth_cookie();
+            self::record_failed_login_attempt($email);
             self::audit_event(
                 'auth_login_failed',
                 [
@@ -4525,6 +4624,25 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
+    private static function record_failed_login_attempt(string $email): void
+    {
+        $email = strtolower(trim($email));
+        if ($email === '' || !is_email($email)) {
+            return;
+        }
+
+        global $wpdb;
+        $now = current_time('mysql', true);
+        $wpdb->query(
+            $wpdb->prepare(
+                'UPDATE ' . self::table('access_requests') . ' SET failed_login_count = failed_login_count + 1, last_failed_login_at = %s, updated_at = %s WHERE business_email = %s',
+                $now,
+                $now,
+                $email
+            )
+        );
+    }
+
     private static function email_delivery_status(string $status): string
     {
         $status = sanitize_key($status);
@@ -4574,9 +4692,68 @@ final class ABiT_SaaS_Auth_API
 
     private static function email_domain_hash(string $email): string
     {
-        $parts = explode('@', strtolower(trim($email)));
-        $domain = count($parts) === 2 ? $parts[1] : '';
+        $domain = self::email_domain($email);
         return $domain === '' ? '' : self::hmac($domain);
+    }
+
+    private static function email_domain(string $email): string
+    {
+        $parts = explode('@', strtolower(trim($email)));
+        if (count($parts) !== 2) {
+            return '';
+        }
+
+        $domain = trim($parts[1], " \t\n\r\0\x0B.");
+        return preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/', $domain) ? $domain : '';
+    }
+
+    private static function is_disposable_email_domain(string $domain): bool
+    {
+        $domain = strtolower(trim($domain));
+        $disposable_domains = [
+            '10minutemail.com',
+            '33mail.com',
+            'dispostable.com',
+            'emailondeck.com',
+            'guerrillamail.com',
+            'mailinator.com',
+            'maildrop.cc',
+            'moakt.com',
+            'sharklasers.com',
+            'tempmail.com',
+            'temp-mail.org',
+            'throwawaymail.com',
+            'trashmail.com',
+            'yopmail.com',
+        ];
+
+        return in_array($domain, $disposable_domains, true);
+    }
+
+    private static function is_suspicious_email_domain(string $domain): bool
+    {
+        $domain = strtolower(trim($domain));
+        if ($domain === '') {
+            return false;
+        }
+
+        $free_domains = [
+            'aol.com',
+            'gmail.com',
+            'hotmail.com',
+            'icloud.com',
+            'live.com',
+            'mail.com',
+            'outlook.com',
+            'proton.me',
+            'protonmail.com',
+            'yahoo.com',
+        ];
+        if (in_array($domain, $free_domains, true)) {
+            return true;
+        }
+
+        return preg_match('/\.(click|country|download|gq|icu|rest|ru|tk|top|work|xyz)$/', $domain) === 1;
     }
 
     private static function masked_email(string $email): string
