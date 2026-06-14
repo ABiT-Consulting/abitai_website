@@ -218,6 +218,12 @@ final class ABiT_SaaS_Auth_API
 
         self::maybe_install_schema();
 
+        $detail_id = self::signup_review_detail_id_from_request();
+        if ($detail_id > 0) {
+            self::render_signup_review_detail_page($detail_id);
+            return;
+        }
+
         $filters = self::signup_review_filters_from_request();
         $rows = self::signup_review_rows($filters);
         $countries = self::signup_review_country_options();
@@ -227,6 +233,12 @@ final class ABiT_SaaS_Auth_API
         self::render_signup_review_filters($filters, $countries);
         self::render_signup_review_table($rows);
         echo '</div>';
+    }
+
+    private static function signup_review_detail_id_from_request(): int
+    {
+        $request = wp_unslash($_GET);
+        return isset($request['access_request_id']) ? max(0, (int) $request['access_request_id']) : 0;
     }
 
     private static function signup_review_filters_from_request(): array
@@ -348,7 +360,15 @@ final class ABiT_SaaS_Auth_API
                 $owner = self::first_non_empty([$row['owner_name'] ?? null, $row['owner_email'] ?? null, 'User #' . (int) ($row['user_id'] ?? 0)]);
 
                 echo '<tr>';
-                echo '<td>' . esc_html('#' . (int) $row['id']) . '<br><small>' . esc_html((string) ($row['created_at'] ?? '')) . '</small></td>';
+                $detail_url = add_query_arg(
+                    [
+                        'page' => 'abit-signup-review',
+                        'access_request_id' => (int) $row['id'],
+                    ],
+                    admin_url('tools.php')
+                );
+
+                echo '<td><a href="' . esc_url($detail_url) . '">' . esc_html('#' . (int) $row['id']) . '</a><br><small>' . esc_html((string) ($row['created_at'] ?? '')) . '</small></td>';
                 echo '<td>' . esc_html((string) ($row['full_name'] ?? '')) . '<br><small>' . esc_html(self::masked_email((string) ($row['business_email'] ?? ''))) . '</small></td>';
                 echo '<td>' . esc_html((string) ($row['company_name'] ?? '')) . '<br><small>' . esc_html((string) ($row['role'] ?? '')) . '</small></td>';
                 echo '<td>' . esc_html(empty($row['email_verified_at']) ? 'Unverified' : 'Verified') . '<br><small>' . esc_html((string) ($row['email_verified_at'] ?? '')) . '</small></td>';
@@ -364,6 +384,309 @@ final class ABiT_SaaS_Auth_API
         }
 
         echo '</tbody></table>';
+    }
+
+    private static function render_signup_review_detail_page(int $access_request_id): void
+    {
+        $access_request = self::signup_review_detail($access_request_id);
+        $back_url = admin_url('tools.php?page=abit-signup-review');
+
+        echo '<div class="wrap"><h1>ABiT Customer Profile</h1>';
+        echo '<p><a class="button" href="' . esc_url($back_url) . '">Back to signup review</a></p>';
+
+        if (!is_array($access_request)) {
+            echo '<div class="notice notice-error"><p>Access request not found.</p></div></div>';
+            return;
+        }
+
+        $user = get_userdata((int) $access_request['user_id']);
+        $modules = self::normalize_erp_module_interests(self::decode_list_value($access_request['erp_module_interest'] ?? null));
+        $module_mapping = self::erp_onboarding_module_mapping($modules);
+        $account_state = $user instanceof WP_User
+            ? self::account_state_from_access_request($user, $access_request)
+            : [
+                'access_request_id' => (int) $access_request['id'],
+                'company_id' => (int) $access_request['company_id'],
+                'review_status' => (string) $access_request['review_status'],
+                'email_verified' => !empty($access_request['email_verified_at']),
+                'state' => 'review_pending',
+                'route' => 'review_pending',
+                'locked' => false,
+            ];
+        $onboarding = $user instanceof WP_User ? self::onboarding_payload($user, $access_request, $account_state) : [];
+        $provisioning = $user instanceof WP_User ? self::provisioning_payload($user, $access_request, $account_state, $onboarding) : null;
+        $workspace = $user instanceof WP_User ? self::workspace_payload($user, $access_request) : null;
+        $consent = self::signup_review_consent_audit((int) $access_request['id']);
+        $email_events = self::signup_review_email_events((int) $access_request['id']);
+        $provisioning_request = self::provisioning_request_for_access_request((int) $access_request['id']);
+
+        echo '<p>Internal customer context for admin review. Passwords, raw tokens, cookies, sessions, and verification token hashes are not displayed.</p>';
+        echo '<style>.abit-profile-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:16px}.abit-profile-panel{background:#fff;border:1px solid #c3c4c7;padding:16px}.abit-profile-panel h2{margin-top:0}.abit-profile-panel dl{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;margin:0}.abit-profile-panel dt{font-weight:600}.abit-profile-panel dd{margin:0;overflow-wrap:anywhere}.abit-profile-list{margin:0}.abit-profile-list li{margin-bottom:6px}.abit-readiness-pass{color:#008a20;font-weight:600}.abit-readiness-fail{color:#b32d2e;font-weight:600}.abit-profile-notes{white-space:pre-wrap}</style>';
+
+        echo '<div class="abit-profile-grid">';
+        self::render_signup_profile_panel(
+            'Signup Data',
+            [
+                'Request ID' => '#' . (int) $access_request['id'],
+                'Review status' => self::signup_review_label((string) $access_request['review_status']),
+                'Signup created' => self::nullable_datetime($access_request['created_at'] ?? null),
+                'Last updated' => self::nullable_datetime($access_request['updated_at'] ?? null),
+                'Full name' => (string) $access_request['full_name'],
+                'Business email' => (string) $access_request['business_email'],
+                'Email verification' => !empty($access_request['email_verified_at']) ? 'Verified at ' . (string) $access_request['email_verified_at'] : 'Unverified',
+                'WordPress user' => self::signup_review_user_summary($access_request, $user),
+            ]
+        );
+        self::render_signup_profile_panel(
+            'Company Profile',
+            [
+                'Company' => self::first_non_empty([$access_request['company_record_name'] ?? null, $access_request['company_name'] ?? null]),
+                'Company ID' => (int) $access_request['company_id'] > 0 ? '#' . (int) $access_request['company_id'] : '',
+                'Country or region' => self::first_non_empty([$access_request['company_record_country_region'] ?? null, $access_request['country_region'] ?? null]),
+                'Company status' => self::signup_review_label((string) ($access_request['company_record_status'] ?? '')),
+                'Company size' => self::signup_review_label((string) ($access_request['company_size'] ?? '')),
+                'Industry' => self::signup_review_label((string) ($access_request['industry'] ?? '')),
+                'Role' => (string) ($access_request['role'] ?? ''),
+                'Persona' => self::signup_review_label((string) ($onboarding['admin_review_fields']['persona'] ?? $access_request['persona'] ?? '')),
+            ]
+        );
+        self::render_signup_profile_panel(
+            'Module Interests',
+            [
+                'ERP modules' => self::signup_review_module_summary($modules),
+                'Templates' => implode(', ', array_map('strval', $module_mapping['onboarding_templates'])),
+                'Qualification tags' => implode(', ', array_map('strval', $module_mapping['qualification_tags'])),
+                'Current system' => (string) ($access_request['current_system'] ?? ''),
+                'Timeline' => self::signup_review_label((string) ($access_request['timeline'] ?? '')),
+            ]
+        );
+        self::render_signup_profile_panel(
+            'Provisioning Readiness',
+            [
+                'Eligible' => is_array($provisioning) && !empty($provisioning['eligible']) ? 'Yes' : 'No',
+                'Missing requirements' => is_array($provisioning) ? implode(', ', array_map([__CLASS__, 'signup_review_label'], $provisioning['missing_requirements'])) : 'Request owner missing',
+                'Provisioning request' => is_array($provisioning_request) ? '#' . (int) $provisioning_request['id'] . ' - ' . self::signup_review_label((string) $provisioning_request['request_status']) : 'Not requested',
+                'Workspace' => is_array($workspace) ? self::signup_review_workspace_summary($workspace) : 'Unavailable',
+                'Workspace slug override' => self::first_non_empty([$access_request['workspace_slug_override'] ?? null]) ?: 'None',
+            ]
+        );
+        echo '</div>';
+
+        self::render_signup_review_workflow_panel($access_request);
+        self::render_signup_review_readiness_panel($provisioning);
+        self::render_signup_review_notes_panel($access_request, $provisioning_request);
+        self::render_signup_review_audit_panel($access_request, $consent, $email_events, $provisioning_request, $workspace);
+        echo '</div>';
+    }
+
+    private static function signup_review_detail(int $access_request_id): ?array
+    {
+        global $wpdb;
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status, u.user_login, u.user_email AS owner_email, u.display_name AS owner_name, u.user_registered, u.user_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id WHERE ar.id = %d LIMIT 1',
+                $access_request_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array($row) ? $row : null;
+    }
+
+    private static function signup_review_consent_audit(int $access_request_id): ?array
+    {
+        global $wpdb;
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT id, access_request_id, user_id, terms_version, privacy_version, consent_text_version, legal_locale, accepted_at, hash_key_version, capture_source, retention_rule, created_at FROM ' . self::table('consent_audit_records') . ' WHERE access_request_id = %d ORDER BY accepted_at DESC, id DESC LIMIT 1',
+                $access_request_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array($row) ? $row : null;
+    }
+
+    private static function signup_review_email_events(int $access_request_id): array
+    {
+        global $wpdb;
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT id, message_type, event_type, delivery_status, delivery_channel, email_delivery_provider, sender_domain, subject_key, failure_reason_category, bounce_type, created_at FROM ' . self::table('email_delivery_events') . ' WHERE access_request_id = %d ORDER BY created_at DESC, id DESC LIMIT 25',
+                $access_request_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    private static function render_signup_profile_panel(string $title, array $rows): void
+    {
+        echo '<section class="abit-profile-panel"><h2>' . esc_html($title) . '</h2><dl>';
+        foreach ($rows as $label => $value) {
+            $value = self::signup_review_display_value($value);
+            echo '<dt>' . esc_html((string) $label) . '</dt><dd>' . esc_html($value) . '</dd>';
+        }
+        echo '</dl></section>';
+    }
+
+    private static function render_signup_review_workflow_panel(array $access_request): void
+    {
+        echo '<section class="abit-profile-panel" style="margin-top:16px;"><h2>Workflow Context</h2><dl>';
+        foreach ([
+            'Intended use case' => $access_request['intended_use_case'] ?? '',
+            'Primary workflow' => $access_request['primary_workflow'] ?? '',
+        ] as $label => $value) {
+            echo '<dt>' . esc_html($label) . '</dt><dd class="abit-profile-notes">' . esc_html(self::signup_review_display_value($value)) . '</dd>';
+        }
+        echo '</dl></section>';
+    }
+
+    private static function render_signup_review_readiness_panel($provisioning): void
+    {
+        echo '<section class="abit-profile-panel" style="margin-top:16px;"><h2>Readiness Checklist</h2>';
+        if (!is_array($provisioning) || empty($provisioning['preflight']['checks'])) {
+            echo '<p>Readiness checklist is unavailable because the request owner user record could not be loaded.</p></section>';
+            return;
+        }
+
+        echo '<ul class="abit-profile-list">';
+        foreach ($provisioning['preflight']['checks'] as $check) {
+            $passed = !empty($check['passed']);
+            echo '<li><span class="' . esc_attr($passed ? 'abit-readiness-pass' : 'abit-readiness-fail') . '">' . esc_html($passed ? 'Pass' : 'Missing') . '</span> - ' . esc_html((string) $check['label']) . '</li>';
+        }
+        echo '</ul></section>';
+    }
+
+    private static function render_signup_review_notes_panel(array $access_request, ?array $provisioning_request): void
+    {
+        echo '<section class="abit-profile-panel" style="margin-top:16px;"><h2>Notes</h2><dl>';
+        echo '<dt>Signup notes</dt><dd class="abit-profile-notes">' . esc_html(self::signup_review_display_value($access_request['notes'] ?? '')) . '</dd>';
+        echo '<dt>Provisioning notes</dt><dd class="abit-profile-notes">' . esc_html(self::signup_review_display_value($provisioning_request['notes'] ?? '')) . '</dd>';
+        echo '</dl></section>';
+    }
+
+    private static function render_signup_review_audit_panel(array $access_request, ?array $consent, array $email_events, ?array $provisioning_request, $workspace): void
+    {
+        $events = [
+            [
+                'created_at' => (string) ($access_request['created_at'] ?? ''),
+                'source' => 'Signup',
+                'event' => 'Access request created',
+                'status' => self::signup_review_label((string) ($access_request['review_status'] ?? '')),
+                'details' => 'Request #' . (int) $access_request['id'],
+            ],
+        ];
+
+        if (is_array($consent)) {
+            $events[] = [
+                'created_at' => (string) ($consent['accepted_at'] ?? $consent['created_at'] ?? ''),
+                'source' => 'Consent',
+                'event' => 'Terms and privacy accepted',
+                'status' => 'Captured',
+                'details' => 'Audit #' . (int) $consent['id'] . '; terms ' . (string) $consent['terms_version'] . '; privacy ' . (string) $consent['privacy_version'] . '; locale ' . (string) $consent['legal_locale'],
+            ];
+        }
+
+        foreach ($email_events as $event) {
+            $details = array_filter([
+                self::signup_review_label((string) ($event['subject_key'] ?? '')),
+                self::signup_review_label((string) ($event['failure_reason_category'] ?? '')),
+                self::signup_review_label((string) ($event['bounce_type'] ?? '')),
+                'provider: ' . (string) ($event['email_delivery_provider'] ?? ''),
+            ]);
+            $events[] = [
+                'created_at' => (string) ($event['created_at'] ?? ''),
+                'source' => 'Email',
+                'event' => self::signup_review_label((string) ($event['message_type'] ?? '')) . ' / ' . self::signup_review_label((string) ($event['event_type'] ?? '')),
+                'status' => self::signup_review_label((string) ($event['delivery_status'] ?? '')),
+                'details' => implode('; ', $details),
+            ];
+        }
+
+        if (is_array($provisioning_request)) {
+            $events[] = [
+                'created_at' => (string) ($provisioning_request['requested_at'] ?? $provisioning_request['created_at'] ?? ''),
+                'source' => 'Provisioning',
+                'event' => 'Provisioning requested',
+                'status' => self::signup_review_label((string) $provisioning_request['request_status']),
+                'details' => 'Request #' . (int) $provisioning_request['id'],
+            ];
+        }
+
+        if (is_array($workspace) && !empty($workspace['workspace'])) {
+            $events[] = [
+                'created_at' => (string) ($workspace['workspace']['created_at'] ?? ''),
+                'source' => 'Workspace',
+                'event' => 'Workspace available',
+                'status' => self::signup_review_label((string) ($workspace['status'] ?? '')),
+                'details' => (string) ($workspace['workspace']['key'] ?? ''),
+            ];
+        }
+
+        usort(
+            $events,
+            static function (array $a, array $b): int {
+                return strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? ''));
+            }
+        );
+
+        echo '<section class="abit-profile-panel" style="margin-top:16px;"><h2>Audit Trail</h2>';
+        echo '<table class="widefat fixed striped"><thead><tr>';
+        foreach (['When', 'Source', 'Event', 'Status', 'Details'] as $heading) {
+            echo '<th scope="col">' . esc_html($heading) . '</th>';
+        }
+        echo '</tr></thead><tbody>';
+        foreach ($events as $event) {
+            echo '<tr>';
+            echo '<td>' . esc_html(self::signup_review_display_value($event['created_at'] ?? '')) . '</td>';
+            echo '<td>' . esc_html((string) ($event['source'] ?? '')) . '</td>';
+            echo '<td>' . esc_html((string) ($event['event'] ?? '')) . '</td>';
+            echo '<td>' . esc_html((string) ($event['status'] ?? '')) . '</td>';
+            echo '<td>' . esc_html((string) ($event['details'] ?? '')) . '</td>';
+            echo '</tr>';
+        }
+        echo '</tbody></table></section>';
+    }
+
+    private static function signup_review_user_summary(array $access_request, $user): string
+    {
+        if ($user instanceof WP_User) {
+            return '#' . (int) $user->ID . ' - ' . self::first_non_empty([$user->display_name, $user->user_email, $user->user_login]);
+        }
+
+        return (int) ($access_request['user_id'] ?? 0) > 0 ? 'Missing user #' . (int) $access_request['user_id'] : 'No user linked';
+    }
+
+    private static function signup_review_workspace_summary($workspace): string
+    {
+        if (!is_array($workspace)) {
+            return 'Unavailable';
+        }
+
+        if (!empty($workspace['workspace'])) {
+            return (string) $workspace['workspace']['key'] . ' - ' . self::signup_review_label((string) ($workspace['status'] ?? ''));
+        }
+
+        return self::signup_review_label((string) ($workspace['status'] ?? 'not_created')) . ' - ' . self::signup_review_label((string) ($workspace['hold_reason'] ?? ''));
+    }
+
+    private static function signup_review_display_value($value): string
+    {
+        if (is_bool($value)) {
+            return $value ? 'Yes' : 'No';
+        }
+
+        if (is_array($value)) {
+            $value = implode(', ', array_map('strval', $value));
+        }
+
+        $value = trim((string) $value);
+        return $value === '' ? 'None' : $value;
     }
 
     private static function signup_review_module_summary(array $modules): string
