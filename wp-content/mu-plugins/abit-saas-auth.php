@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.2';
+    private const SCHEMA_VERSION = '2026-06-14.3';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
     private const REVIEW_STATUS_ONBOARDING_REQUIRED = 'onboarding_required';
@@ -18,6 +18,7 @@ final class ABiT_SaaS_Auth_API
     private const REVIEW_STATUS_APPROVED = 'approved_for_mvp_access';
     private const REVIEW_STATUS_REJECTED = 'rejected';
     private const REVIEW_STATUS_MORE_INFORMATION_REQUESTED = 'more_information_requested';
+    private const PROVISIONING_STATUS_REQUESTED = 'requested';
     private const CONSENT_RETENTION_RULE = 'active_plus_7_years_after_closure';
 
     public static function bootstrap(): void
@@ -68,6 +69,16 @@ final class ABiT_SaaS_Auth_API
                 'permission_callback' => [__CLASS__, 'require_authentication'],
             ]
         );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            '/provisioning/request',
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'request_provisioning'],
+                'permission_callback' => [__CLASS__, 'require_authentication'],
+            ]
+        );
     }
 
     public static function handle_pretty_api_route(): void
@@ -94,6 +105,11 @@ final class ABiT_SaaS_Auth_API
                 'rest_path' => '/' . self::REST_NAMESPACE . '/auth/me',
                 'callback' => [__CLASS__, 'me'],
                 'method' => 'GET',
+            ],
+            '/api/provisioning/request' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/provisioning/request',
+                'callback' => [__CLASS__, 'request_provisioning'],
+                'method' => 'POST',
             ],
         ];
 
@@ -138,6 +154,7 @@ final class ABiT_SaaS_Auth_API
         $companies = self::table('companies');
         $consents = self::table('consent_audit_records');
         $tokens = self::table('email_verification_tokens');
+        $provisioning_requests = self::table('provisioning_requests');
 
         dbDelta("
             CREATE TABLE {$companies} (
@@ -228,6 +245,27 @@ final class ABiT_SaaS_Auth_API
                 KEY access_request_id (access_request_id),
                 KEY user_id (user_id),
                 KEY expires_at (expires_at)
+            ) {$charset_collate};
+        ");
+
+        dbDelta("
+            CREATE TABLE {$provisioning_requests} (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                access_request_id BIGINT UNSIGNED NOT NULL,
+                user_id BIGINT UNSIGNED NOT NULL,
+                company_id BIGINT UNSIGNED NOT NULL,
+                request_status VARCHAR(64) NOT NULL,
+                requested_at DATETIME NOT NULL,
+                processed_at DATETIME NULL,
+                erp_tenant_reference VARCHAR(160) NULL,
+                notes TEXT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY  (id),
+                UNIQUE KEY access_request_id (access_request_id),
+                KEY user_id (user_id),
+                KEY company_id (company_id),
+                KEY request_status (request_status)
             ) {$charset_collate};
         ");
 
@@ -412,6 +450,7 @@ final class ABiT_SaaS_Auth_API
         $access_request = self::access_request_for_user($user);
         $account_state = self::account_state_from_access_request($user, $access_request);
         $onboarding = self::onboarding_payload($user, $access_request, $account_state);
+        $provisioning = self::provisioning_payload($user, $access_request, $account_state, $onboarding);
 
         return new WP_REST_Response(
             [
@@ -431,6 +470,7 @@ final class ABiT_SaaS_Auth_API
                     'created_at' => self::nullable_datetime($access_request['created_at'] ?? null),
                     'updated_at' => self::nullable_datetime($access_request['updated_at'] ?? null),
                 ],
+                'provisioning' => $provisioning,
                 'gate' => [
                     'state' => $account_state['state'],
                     'route' => $account_state['route'],
@@ -440,6 +480,66 @@ final class ABiT_SaaS_Auth_API
                 ],
             ],
             200
+        );
+    }
+
+    public static function request_provisioning(WP_REST_Request $request): WP_REST_Response
+    {
+        self::maybe_install_schema();
+
+        $user_id = self::current_authenticated_user_id();
+        if ($user_id <= 0) {
+            return self::not_authenticated_response();
+        }
+
+        $user = get_userdata($user_id);
+        if (!$user instanceof WP_User) {
+            wp_clear_auth_cookie();
+            wp_set_current_user(0);
+            return self::not_authenticated_response();
+        }
+
+        $access_request = self::access_request_for_user($user);
+        $account_state = self::account_state_from_access_request($user, $access_request);
+        $onboarding = self::onboarding_payload($user, $access_request, $account_state);
+        $eligibility = self::provisioning_eligibility($user, $access_request, $account_state, $onboarding);
+
+        if (!$eligibility['eligible']) {
+            return new WP_REST_Response(
+                [
+                    'message' => $eligibility['message'],
+                    'code' => $eligibility['code'],
+                    'eligible' => false,
+                    'missing_requirements' => $eligibility['missing_requirements'],
+                    'provisioning' => self::provisioning_payload($user, $access_request, $account_state, $onboarding),
+                ],
+                $eligibility['status']
+            );
+        }
+
+        try {
+            $provisioning_request = self::ensure_provisioning_request($access_request, $user);
+        } catch (Throwable $exception) {
+            return new WP_REST_Response(
+                [
+                    'message' => 'Provisioning request could not be recorded.',
+                    'code' => 'provisioning_request_failed',
+                ],
+                500
+            );
+        }
+
+        return new WP_REST_Response(
+            [
+                'message' => 'Provisioning request recorded.',
+                'eligible' => true,
+                'provisioning' => self::format_provisioning_request($provisioning_request),
+                'access_request' => [
+                    'id' => (int) $access_request['id'],
+                    'status' => $account_state['review_status'],
+                ],
+            ],
+            !empty($provisioning_request['_created']) ? 201 : 200
         );
     }
 
@@ -853,6 +953,133 @@ final class ABiT_SaaS_Auth_API
     {
         $value = trim((string) $value);
         return $value === '' ? null : $value;
+    }
+
+    private static function provisioning_payload(WP_User $user, ?array $access_request, array $account_state, array $onboarding): array
+    {
+        $eligibility = self::provisioning_eligibility($user, $access_request, $account_state, $onboarding);
+        $request = is_array($access_request) ? self::provisioning_request_for_access_request((int) $access_request['id']) : null;
+
+        return [
+            'eligible' => $eligibility['eligible'],
+            'missing_requirements' => $eligibility['missing_requirements'],
+            'request' => is_array($request) ? self::format_provisioning_request($request) : null,
+        ];
+    }
+
+    private static function provisioning_eligibility(WP_User $user, ?array $access_request, array $account_state, array $onboarding): array
+    {
+        $missing = [];
+
+        if ($account_state['locked']) {
+            $missing[] = 'account_available';
+        }
+
+        if (!is_array($access_request) || empty($access_request['id']) || empty($access_request['company_id'])) {
+            $missing[] = 'access_request';
+            $missing[] = 'company_profile';
+        }
+
+        if (!$account_state['email_verified']) {
+            $missing[] = 'email_verified';
+        }
+
+        if (empty($onboarding['required_fields_complete'])) {
+            $missing[] = 'required_onboarding_fields';
+        }
+
+        if ($account_state['review_status'] === self::REVIEW_STATUS_REJECTED) {
+            $missing[] = 'request_not_rejected';
+        }
+
+        $missing = array_values(array_unique($missing));
+        if (empty($missing)) {
+            return [
+                'eligible' => true,
+                'code' => 'eligible',
+                'message' => 'Provisioning can be requested.',
+                'missing_requirements' => [],
+                'status' => 200,
+            ];
+        }
+
+        $status = in_array('email_verified', $missing, true) ? 403 : 422;
+        if (in_array('account_available', $missing, true) || in_array('request_not_rejected', $missing, true)) {
+            $status = 423;
+        }
+
+        return [
+            'eligible' => false,
+            'code' => 'provisioning_not_allowed',
+            'message' => 'Provisioning can only be requested after email verification and required company onboarding are complete.',
+            'missing_requirements' => $missing,
+            'status' => $status,
+        ];
+    }
+
+    private static function provisioning_request_for_access_request(int $access_request_id): ?array
+    {
+        global $wpdb;
+
+        $request = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT id, access_request_id, user_id, company_id, request_status, requested_at, processed_at, erp_tenant_reference, notes, created_at, updated_at FROM ' . self::table('provisioning_requests') . ' WHERE access_request_id = %d LIMIT 1',
+                $access_request_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array($request) ? $request : null;
+    }
+
+    private static function ensure_provisioning_request(array $access_request, WP_User $user): array
+    {
+        $existing = self::provisioning_request_for_access_request((int) $access_request['id']);
+        if (is_array($existing)) {
+            $existing['_created'] = false;
+            return $existing;
+        }
+
+        global $wpdb;
+        $now = current_time('mysql', true);
+        $inserted = $wpdb->insert(
+            self::table('provisioning_requests'),
+            [
+                'access_request_id' => (int) $access_request['id'],
+                'user_id' => (int) $user->ID,
+                'company_id' => (int) $access_request['company_id'],
+                'request_status' => self::PROVISIONING_STATUS_REQUESTED,
+                'requested_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            ['%d', '%d', '%d', '%s', '%s', '%s', '%s']
+        );
+
+        if (false === $inserted || empty($wpdb->insert_id)) {
+            throw new RuntimeException('Provisioning request could not be created.');
+        }
+
+        $created = self::provisioning_request_for_access_request((int) $access_request['id']);
+        if (!is_array($created)) {
+            throw new RuntimeException('Provisioning request could not be loaded.');
+        }
+
+        $created['_created'] = true;
+        return $created;
+    }
+
+    private static function format_provisioning_request(array $request): array
+    {
+        return [
+            'id' => (int) $request['id'],
+            'access_request_id' => (int) $request['access_request_id'],
+            'company_id' => (int) $request['company_id'],
+            'status' => (string) $request['request_status'],
+            'requested_at' => self::nullable_datetime($request['requested_at'] ?? null),
+            'processed_at' => self::nullable_datetime($request['processed_at'] ?? null),
+            'erp_tenant_reference' => self::first_non_empty([$request['erp_tenant_reference'] ?? null]),
+        ];
     }
 
     private static function is_user_locked(WP_User $user): bool
