@@ -837,6 +837,22 @@ if ( ! function_exists( 'abitai_get_country_region_options' ) ) {
 	}
 }
 
+if ( ! function_exists( 'abitai_get_erp_module_interest_options' ) ) {
+	function abitai_get_erp_module_interest_options() {
+		return array(
+			'finance'       => __( 'Finance', 'astra' ),
+			'hr'            => __( 'HR', 'astra' ),
+			'inventory'     => __( 'Inventory', 'astra' ),
+			'sales'         => __( 'Sales', 'astra' ),
+			'purchasing'    => __( 'Purchasing', 'astra' ),
+			'crm'           => __( 'CRM', 'astra' ),
+			'manufacturing' => __( 'Manufacturing', 'astra' ),
+			'projects'      => __( 'Projects', 'astra' ),
+			'reporting'     => __( 'Reporting', 'astra' ),
+		);
+	}
+}
+
 if ( ! function_exists( 'abitai_text_has_unsafe_content' ) ) {
 	function abitai_text_has_unsafe_content( $value ) {
 		return preg_match( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F<>]/', $value ) || preg_match( '/https?:\/\/|www\./i', $value );
@@ -873,6 +889,11 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 		$job_title        = isset( $_POST['job_title'] ) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
 		$country_region   = isset( $_POST['country_region'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_POST['country_region'] ) ) ) : '';
 		$phone            = isset( $_POST['phone'] ) ? sanitize_text_field( wp_unslash( $_POST['phone'] ) ) : '';
+		$erp_module_interest = array();
+
+		if ( isset( $_POST['erp_module_interest'] ) && is_array( $_POST['erp_module_interest'] ) ) {
+			$erp_module_interest = array_values( array_unique( array_map( 'sanitize_key', wp_unslash( $_POST['erp_module_interest'] ) ) ) );
+		}
 
 		$error_args = array_filter(
 			array(
@@ -885,6 +906,7 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 				'job_title'            => $job_title,
 				'country_region'       => $country_region,
 				'phone'                => $phone,
+				'erp_module_interest'  => $erp_module_interest,
 			)
 		);
 
@@ -917,6 +939,7 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 			$valid_company_sizes = array_keys( abitai_get_company_size_options() );
 			$valid_industries    = array_keys( abitai_get_industry_options() );
 			$valid_countries     = array_keys( abitai_get_country_region_options() );
+			$valid_modules       = array_keys( abitai_get_erp_module_interest_options() );
 
 			if ( strlen( $company_name ) < 2 || strlen( $company_name ) > 160 || abitai_text_has_unsafe_content( $company_name ) ) {
 				wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'invalid_company' ) ), $redirect_url ) );
@@ -940,6 +963,11 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 
 			if ( '' !== $phone && ( strlen( $phone ) > 40 || ! preg_match( '/^[0-9+().\-\s]+$/', $phone ) ) ) {
 				wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'missing_fields' ) ), $redirect_url ) );
+				exit;
+			}
+
+			if ( empty( $erp_module_interest ) || array_diff( $erp_module_interest, $valid_modules ) ) {
+				wp_safe_redirect( add_query_arg( array_merge( $error_args, array( 'signup_error' => 'missing_module_interest' ) ), $redirect_url ) );
 				exit;
 			}
 		}
@@ -985,6 +1013,7 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 			update_user_meta( $user_id, 'abitai_role', $job_title );
 			update_user_meta( $user_id, 'abitai_country_region', $country_region );
 			update_user_meta( $user_id, 'abitai_phone', $phone );
+			update_user_meta( $user_id, 'abitai_erp_module_interest', $erp_module_interest );
 		}
 
 		wp_set_current_user( $user_id );

@@ -129,15 +129,20 @@
 		var consent = form.querySelector( '#abit-auth-signup-consent' );
 		var accountStep = form.querySelector( '[data-auth-signup-step="account"]' );
 		var companyStep = form.querySelector( '[data-auth-signup-step="company"]' );
+		var modulesStep = form.querySelector( '[data-auth-signup-step="modules"]' );
 		var nextStep = form.querySelector( '[data-auth-next-step]' );
+		var nextCompanyStep = form.querySelector( '[data-auth-next-company-step]' );
 		var prevStep = form.querySelector( '[data-auth-prev-step]' );
+		var prevCompanyStep = form.querySelector( '[data-auth-prev-company-step]' );
 		var accountStepper = document.querySelector( '[data-auth-stepper-item="account"]' );
 		var companyStepper = document.querySelector( '[data-auth-stepper-item="company"]' );
+		var modulesStepper = document.querySelector( '[data-auth-stepper-item="modules"]' );
 		var submit = form.querySelector( '[data-auth-submit]' );
 		var success = document.querySelector( '.abit-auth-signup-success' );
 		var defaultLabel = submit ? submit.textContent : '';
 		var loadingLabel = submit ? submit.getAttribute( 'data-loading-label' ) : '';
 		var storageKey = 'abitai.signup.companyStepDraft';
+		var moduleInputs = Array.prototype.slice.call( form.querySelectorAll( 'input[name="erp_module_interest[]"]' ) );
 
 		var fields = {
 			full_name: {
@@ -199,10 +204,27 @@
 				input: form.querySelector( '#abit-auth-phone' ),
 				field: form.querySelector( '[data-auth-field="phone"]' ),
 				error: form.querySelector( '#abit-auth-phone-error' )
+			},
+			erp_module_interest: {
+				input: moduleInputs[ 0 ],
+				inputs: moduleInputs,
+				field: form.querySelector( '[data-auth-field="erp_module_interest"]' ),
+				error: form.querySelector( '#abit-auth-module-interest-error' )
 			}
 		};
 
 		function markError( key, hasError ) {
+			if ( 'erp_module_interest' === key ) {
+				fields[ key ].field.classList.toggle( 'is-error', hasError );
+				fields[ key ].inputs.forEach( function ( input ) {
+					input.setAttribute( 'aria-invalid', hasError ? 'true' : 'false' );
+				} );
+				if ( fields[ key ].error ) {
+					fields[ key ].error.hidden = ! hasError;
+				}
+				return;
+			}
+
 			setFieldError( fields[ key ].field, fields[ key ].error, fields[ key ].input, hasError );
 		}
 
@@ -253,25 +275,50 @@
 			return focusFirstInvalid( invalid );
 		}
 
-		function setStep( stepName ) {
-			var isCompany = 'company' === stepName;
+		function validateModulesStep() {
+			var invalid = {
+				erp_module_interest: ! fields.erp_module_interest.inputs.some( function ( input ) {
+					return input.checked;
+				} )
+			};
 
-			if ( accountStep && companyStep ) {
-				accountStep.hidden = isCompany;
+			return focusFirstInvalid( invalid );
+		}
+
+		function setStep( stepName ) {
+			var isAccount = 'account' === stepName;
+			var isCompany = 'company' === stepName;
+			var isModules = 'modules' === stepName;
+
+			if ( accountStep && companyStep && modulesStep ) {
+				accountStep.hidden = ! isAccount;
 				companyStep.hidden = ! isCompany;
+				modulesStep.hidden = ! isModules;
 			}
 
-			if ( accountStepper && companyStepper ) {
-				accountStepper.classList.toggle( 'is-active', ! isCompany );
-				accountStepper.classList.toggle( 'is-complete', isCompany );
+			if ( accountStepper && companyStepper && modulesStepper ) {
+				accountStepper.classList.toggle( 'is-active', isAccount );
+				accountStepper.classList.toggle( 'is-complete', isCompany || isModules );
 				companyStepper.classList.toggle( 'is-active', isCompany );
+				companyStepper.classList.toggle( 'is-complete', isModules );
+				modulesStepper.classList.toggle( 'is-active', isModules );
+
+				if ( isAccount ) {
+					accountStepper.setAttribute( 'aria-current', 'step' );
+				} else {
+					accountStepper.removeAttribute( 'aria-current' );
+				}
 
 				if ( isCompany ) {
-					accountStepper.removeAttribute( 'aria-current' );
 					companyStepper.setAttribute( 'aria-current', 'step' );
 				} else {
-					accountStepper.setAttribute( 'aria-current', 'step' );
 					companyStepper.removeAttribute( 'aria-current' );
+				}
+
+				if ( isModules ) {
+					modulesStepper.setAttribute( 'aria-current', 'step' );
+				} else {
+					modulesStepper.removeAttribute( 'aria-current' );
 				}
 			}
 		}
@@ -287,6 +334,16 @@
 
 			getDraftFields().forEach( function ( key ) {
 				var input = fields[ key ].input;
+
+				if ( 'erp_module_interest' === key ) {
+					draft[ key ] = fields[ key ].inputs.filter( function ( moduleInput ) {
+						return moduleInput.checked;
+					} ).map( function ( moduleInput ) {
+						return moduleInput.value;
+					} );
+					return;
+				}
+
 				draft[ key ] = 'checkbox' === input.type ? input.checked : input.value;
 			} );
 
@@ -311,7 +368,15 @@
 					return;
 				}
 
-				if ( 'checkbox' === input.type ) {
+				if ( 'erp_module_interest' === key ) {
+					fields[ key ].inputs.forEach( function ( moduleInput ) {
+						if ( moduleInput.checked ) {
+							return;
+						}
+						moduleInput.checked = Array.isArray( draft[ key ] ) && draft[ key ].indexOf( moduleInput.value ) !== -1;
+						moduleInput.closest( '.abit-auth-module-option' ).classList.toggle( 'is-selected', moduleInput.checked );
+					} );
+				} else if ( 'checkbox' === input.type ) {
 					if ( input.checked ) {
 						return;
 					}
@@ -332,13 +397,23 @@
 
 			eventName = 'checkbox' === field.input.type || 'SELECT' === field.input.tagName ? 'change' : 'input';
 
-			field.input.addEventListener( eventName, function () {
-				field.input.removeAttribute( 'aria-invalid' );
-				field.field.classList.remove( 'is-error' );
-				if ( field.error ) {
-					field.error.hidden = true;
-				}
-				saveDraft();
+			( field.inputs || [ field.input ] ).forEach( function ( input ) {
+				input.addEventListener( eventName, function () {
+					( field.inputs || [ field.input ] ).forEach( function ( fieldInput ) {
+						fieldInput.removeAttribute( 'aria-invalid' );
+					} );
+
+					field.field.classList.remove( 'is-error' );
+					if ( field.error ) {
+						field.error.hidden = true;
+					}
+
+					if ( 'erp_module_interest' === key ) {
+						input.closest( '.abit-auth-module-option' ).classList.toggle( 'is-selected', input.checked );
+					}
+
+					saveDraft();
+				} );
 			} );
 		} );
 
@@ -362,14 +437,37 @@
 			} );
 		}
 
+		if ( nextCompanyStep ) {
+			nextCompanyStep.addEventListener( 'click', function () {
+				if ( validateCompanyStep() ) {
+					saveDraft();
+					setStep( 'modules' );
+					if ( fields.erp_module_interest.input ) {
+						fields.erp_module_interest.input.focus();
+					}
+				}
+			} );
+		}
+
+		if ( prevCompanyStep ) {
+			prevCompanyStep.addEventListener( 'click', function () {
+				saveDraft();
+				setStep( 'company' );
+				if ( fields.company_name.input ) {
+					fields.company_name.input.focus();
+				}
+			} );
+		}
+
 		restoreDraft();
 
 		form.addEventListener( 'submit', function ( event ) {
 			var isAccountValid = validateAccountStep();
 			var isCompanyValid = isAccountValid ? validateCompanyStep() : false;
+			var isModulesValid = isCompanyValid ? validateModulesStep() : false;
 
-			if ( ! isAccountValid || ! isCompanyValid ) {
-				setStep( isAccountValid ? 'company' : 'account' );
+			if ( ! isAccountValid || ! isCompanyValid || ! isModulesValid ) {
+				setStep( ! isAccountValid ? 'account' : ( ! isCompanyValid ? 'company' : 'modules' ) );
 				event.preventDefault();
 				return;
 			}

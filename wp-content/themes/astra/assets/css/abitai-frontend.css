@@ -1398,6 +1398,7 @@ body.aierp-front-page * {
 
 .abit-auth-field.is-error .abit-auth-input,
 .abit-auth-field.is-error .abit-auth-select,
+.abit-auth-module-selector.is-error .abit-auth-module-option,
 .abit-auth-input[aria-invalid="true"] {
 	border-color: #f04438;
 	box-shadow: 0 0 0 4px rgba(240, 68, 56, 0.12);

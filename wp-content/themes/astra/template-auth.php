@@ -185,6 +185,11 @@ function abitai_auth_render_signup_slot() {
 		'country_region'       => isset( $_GET['country_region'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_GET['country_region'] ) ) ) : '',
 		'phone'                => isset( $_GET['phone'] ) ? sanitize_text_field( wp_unslash( $_GET['phone'] ) ) : '',
 	);
+	$selected_modules = array();
+
+	if ( isset( $_GET['erp_module_interest'] ) && is_array( $_GET['erp_module_interest'] ) ) {
+		$selected_modules = array_values( array_unique( array_map( 'sanitize_key', wp_unslash( $_GET['erp_module_interest'] ) ) ) );
+	}
 
 	$error_messages = array(
 		'invalid_nonce'     => __( 'Your session expired. Please try submitting again.', 'astra' ),
@@ -199,11 +204,13 @@ function abitai_auth_render_signup_slot() {
 		'invalid_select'    => __( 'Choose an option to continue.', 'astra' ),
 		'invalid_business_description' => __( 'Describe the workflow in at least 20 characters.', 'astra' ),
 		'invalid_job_title' => __( 'Complete this field to continue.', 'astra' ),
+		'missing_module_interest' => __( 'Select at least one ERP module interest.', 'astra' ),
 	);
 
 	$company_size_options = function_exists( 'abitai_get_company_size_options' ) ? abitai_get_company_size_options() : array();
 	$industry_options     = function_exists( 'abitai_get_industry_options' ) ? abitai_get_industry_options() : array();
 	$country_options      = function_exists( 'abitai_get_country_region_options' ) ? abitai_get_country_region_options() : array();
+	$module_options       = function_exists( 'abitai_get_erp_module_interest_options' ) ? abitai_get_erp_module_interest_options() : array();
 	?>
 	<?php if ( isset( $error_messages[ $signup_error ] ) ) : ?>
 		<div id="abit-auth-signup-error" class="abit-auth-alert abit-auth-alert--error" role="alert" tabindex="-1" data-auth-autofocus>
@@ -217,7 +224,7 @@ function abitai_auth_render_signup_slot() {
 	<div class="abit-auth-stepper" aria-label="<?php echo esc_attr__( 'Signup progress', 'astra' ); ?>">
 		<div class="abit-auth-stepper__item is-active" aria-current="step" data-auth-stepper-item="account"><span class="abit-auth-stepper__marker">1</span><span><?php esc_html_e( 'Account', 'astra' ); ?></span></div>
 		<div class="abit-auth-stepper__item" data-auth-stepper-item="company"><span class="abit-auth-stepper__marker">2</span><span><?php esc_html_e( 'Company', 'astra' ); ?></span></div>
-		<div class="abit-auth-stepper__item"><span class="abit-auth-stepper__marker">3</span><span><?php esc_html_e( 'ERP needs', 'astra' ); ?></span></div>
+		<div class="abit-auth-stepper__item" data-auth-stepper-item="modules"><span class="abit-auth-stepper__marker">3</span><span><?php esc_html_e( 'ERP needs', 'astra' ); ?></span></div>
 	</div>
 	<form class="abit-auth-form" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post" data-auth-signup-form novalidate>
 		<input type="hidden" name="action" value="abitai_user_signup" />
@@ -323,8 +330,30 @@ function abitai_auth_render_signup_slot() {
 				<p id="abit-auth-phone-error" class="abit-auth-error" hidden><?php esc_html_e( 'Enter a valid phone number or leave it blank.', 'astra' ); ?></p>
 			</div>
 			<div class="abit-auth-actions">
-				<button type="submit" class="abit-auth-button abit-auth-button--primary" data-auth-submit data-loading-label="<?php echo esc_attr__( 'Saving company...', 'astra' ); ?>"><?php esc_html_e( 'Continue', 'astra' ); ?></button>
+				<button type="button" class="abit-auth-button abit-auth-button--primary" data-auth-next-company-step><?php esc_html_e( 'Continue', 'astra' ); ?></button>
 				<button type="button" class="abit-auth-button abit-auth-button--secondary" data-auth-prev-step><?php esc_html_e( 'Back', 'astra' ); ?></button>
+			</div>
+		</div>
+		<div data-auth-signup-step="modules" hidden>
+			<div class="abit-auth-route-header abit-auth-step-header">
+				<h3><?php esc_html_e( 'ERP module interest', 'astra' ); ?></h3>
+				<p><?php esc_html_e( 'Select the ERPNext areas you want to evaluate first.', 'astra' ); ?></p>
+			</div>
+			<fieldset class="abit-auth-module-selector" data-auth-field="erp_module_interest" aria-describedby="abit-auth-module-interest-error">
+				<legend><?php esc_html_e( 'ERP module interest', 'astra' ); ?></legend>
+				<p id="abit-auth-module-interest-error" class="abit-auth-error" hidden><?php esc_html_e( 'Select at least one ERP module interest.', 'astra' ); ?></p>
+				<div class="abit-auth-module-grid">
+					<?php foreach ( $module_options as $value => $label ) : ?>
+						<label class="abit-auth-module-option<?php echo in_array( $value, $selected_modules, true ) ? ' is-selected' : ''; ?>">
+							<input type="checkbox" name="erp_module_interest[]" value="<?php echo esc_attr( $value ); ?>" <?php checked( in_array( $value, $selected_modules, true ) ); ?> />
+							<span><?php echo esc_html( $label ); ?></span>
+						</label>
+					<?php endforeach; ?>
+				</div>
+			</fieldset>
+			<div class="abit-auth-actions">
+				<button type="submit" class="abit-auth-button abit-auth-button--primary" data-auth-submit data-loading-label="<?php echo esc_attr__( 'Submitting request...', 'astra' ); ?>"><?php esc_html_e( 'Submit request', 'astra' ); ?></button>
+				<button type="button" class="abit-auth-button abit-auth-button--secondary" data-auth-prev-company-step><?php esc_html_e( 'Back', 'astra' ); ?></button>
 			</div>
 		</div>
 	</form>
