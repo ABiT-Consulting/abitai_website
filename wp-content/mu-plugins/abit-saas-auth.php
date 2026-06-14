@@ -13,6 +13,11 @@ final class ABiT_SaaS_Auth_API
     private const SCHEMA_VERSION = '2026-06-14.1';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
+    private const REVIEW_STATUS_ONBOARDING_REQUIRED = 'onboarding_required';
+    private const REVIEW_STATUS_PENDING_ADMIN_REVIEW = 'pending_admin_review';
+    private const REVIEW_STATUS_APPROVED = 'approved_for_mvp_access';
+    private const REVIEW_STATUS_REJECTED = 'rejected';
+    private const REVIEW_STATUS_MORE_INFORMATION_REQUESTED = 'more_information_requested';
     private const CONSENT_RETENTION_RULE = 'active_plus_7_years_after_closure';
 
     public static function bootstrap(): void
@@ -33,12 +38,34 @@ final class ABiT_SaaS_Auth_API
                 'permission_callback' => '__return_true',
             ]
         );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            '/auth/login',
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'login'],
+                'permission_callback' => '__return_true',
+            ]
+        );
     }
 
     public static function handle_pretty_api_route(): void
     {
         $path = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
-        if ('/api/auth/register' !== untrailingslashit($path)) {
+        $path = untrailingslashit($path);
+        $routes = [
+            '/api/auth/register' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/auth/register',
+                'callback' => [__CLASS__, 'register'],
+            ],
+            '/api/auth/login' => [
+                'rest_path' => '/' . self::REST_NAMESPACE . '/auth/login',
+                'callback' => [__CLASS__, 'login'],
+            ],
+        ];
+
+        if (!isset($routes[$path])) {
             return;
         }
 
@@ -51,11 +78,11 @@ final class ABiT_SaaS_Auth_API
         }
 
         $payload = json_decode(file_get_contents('php://input'), true);
-        $request = new WP_REST_Request('POST', '/' . self::REST_NAMESPACE . '/auth/register');
+        $request = new WP_REST_Request('POST', $routes[$path]['rest_path']);
         $request->set_body_params(is_array($payload) ? $payload : []);
         $request->set_header('content-type', $_SERVER['CONTENT_TYPE'] ?? 'application/json');
 
-        $response = rest_ensure_response(self::register($request));
+        $response = rest_ensure_response(call_user_func($routes[$path]['callback'], $request));
         wp_send_json($response->get_data(), $response->get_status());
     }
 
@@ -230,6 +257,61 @@ final class ABiT_SaaS_Auth_API
         }
     }
 
+    public static function login(WP_REST_Request $request): WP_REST_Response
+    {
+        self::maybe_install_schema();
+
+        $payload = self::request_payload($request);
+        $validated = self::validate_login_payload($payload);
+
+        if (!empty($validated['field_errors'])) {
+            return self::field_error_response($validated['field_errors']);
+        }
+
+        $email = $validated['data']['email'];
+        $password = $validated['data']['password'];
+        $remember = $validated['data']['remember'];
+        $user = get_user_by('email', $email);
+
+        if (!$user instanceof WP_User || !wp_check_password($password, $user->user_pass, $user->ID)) {
+            return self::login_failed_response();
+        }
+
+        $account_state = self::account_state_for_user($user);
+        if (!empty($account_state['locked'])) {
+            wp_clear_auth_cookie();
+            return new WP_REST_Response(
+                [
+                    'message' => 'This account cannot sign in right now. Contact support for help.',
+                    'code' => 'account_locked',
+                    'state' => 'account_locked',
+                ],
+                423
+            );
+        }
+
+        wp_clear_auth_cookie();
+        wp_set_current_user($user->ID);
+        wp_set_auth_cookie($user->ID, $remember, is_ssl());
+        do_action('wp_login', $user->user_login, $user);
+
+        return new WP_REST_Response(
+            [
+                'message' => 'Signed in. Redirecting...',
+                'authenticated' => true,
+                'user_id' => $user->ID,
+                'access_request_id' => $account_state['access_request_id'],
+                'company_id' => $account_state['company_id'],
+                'status' => $account_state['review_status'],
+                'state' => $account_state['state'],
+                'route' => $account_state['route'],
+                'email_verified' => $account_state['email_verified'],
+                'nonce' => wp_create_nonce('wp_rest'),
+            ],
+            200
+        );
+    }
+
     private static function request_payload(WP_REST_Request $request): array
     {
         $params = $request->get_json_params();
@@ -287,6 +369,112 @@ final class ABiT_SaaS_Auth_API
             'data' => $data,
             'field_errors' => $errors,
         ];
+    }
+
+    private static function validate_login_payload(array $payload): array
+    {
+        $errors = [];
+        $data = [];
+
+        $data['email'] = strtolower(trim((string) ($payload['email'] ?? $payload['business_email'] ?? '')));
+        if (strlen($data['email']) > 254 || !is_email($data['email'])) {
+            $errors['email'] = 'Enter a valid email address.';
+        }
+
+        $data['password'] = (string) ($payload['password'] ?? '');
+        if ($data['password'] === '') {
+            $errors['password'] = 'Enter your password.';
+        }
+
+        $remember = $payload['remember'] ?? $payload['remember_me'] ?? false;
+        $data['remember'] = true === filter_var($remember, FILTER_VALIDATE_BOOLEAN);
+
+        return [
+            'data' => $data,
+            'field_errors' => $errors,
+        ];
+    }
+
+    private static function login_failed_response(): WP_REST_Response
+    {
+        return new WP_REST_Response(
+            [
+                'message' => 'We could not sign you in with those details. Check your email and password, then try again.',
+                'code' => 'invalid_login',
+            ],
+            401
+        );
+    }
+
+    private static function account_state_for_user(WP_User $user): array
+    {
+        global $wpdb;
+
+        $access_request = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT id, company_id, review_status, email_verified_at FROM ' . self::table('access_requests') . ' WHERE user_id = %d OR business_email = %s ORDER BY id DESC LIMIT 1',
+                $user->ID,
+                $user->user_email
+            ),
+            ARRAY_A
+        );
+
+        $review_status = is_array($access_request) && !empty($access_request['review_status'])
+            ? (string) $access_request['review_status']
+            : (string) get_user_meta($user->ID, 'abit_saas_review_status', true);
+
+        if ($review_status === '') {
+            $review_status = self::REVIEW_STATUS_PENDING_EMAIL;
+        }
+
+        $locked = self::is_user_locked($user);
+        $state = self::state_for_review_status($review_status);
+
+        return [
+            'access_request_id' => is_array($access_request) ? (int) $access_request['id'] : null,
+            'company_id' => is_array($access_request) ? (int) $access_request['company_id'] : null,
+            'review_status' => $review_status,
+            'email_verified' => is_array($access_request) && !empty($access_request['email_verified_at']),
+            'state' => $state['state'],
+            'route' => $state['route'],
+            'locked' => $locked,
+        ];
+    }
+
+    private static function state_for_review_status(string $review_status): array
+    {
+        $states = [
+            self::REVIEW_STATUS_PENDING_EMAIL => ['state' => 'verification_required', 'route' => 'verify_email'],
+            self::REVIEW_STATUS_ONBOARDING_REQUIRED => ['state' => 'onboarding_required', 'route' => 'onboarding'],
+            self::REVIEW_STATUS_PENDING_ADMIN_REVIEW => ['state' => 'review_pending', 'route' => 'review_pending'],
+            self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED => ['state' => 'more_information_requested', 'route' => 'onboarding'],
+            self::REVIEW_STATUS_APPROVED => ['state' => 'approved', 'route' => 'app'],
+            self::REVIEW_STATUS_REJECTED => ['state' => 'rejected', 'route' => 'rejected'],
+        ];
+
+        return $states[$review_status] ?? ['state' => 'review_pending', 'route' => 'review_pending'];
+    }
+
+    private static function is_user_locked(WP_User $user): bool
+    {
+        if ((int) $user->user_status !== 0) {
+            return true;
+        }
+
+        $lock_meta_keys = [
+            'abit_saas_account_locked',
+            'abit_saas_security_hold',
+            'account_locked',
+        ];
+
+        foreach ($lock_meta_keys as $key) {
+            $value = get_user_meta($user->ID, $key, true);
+            if (true === filter_var($value, FILTER_VALIDATE_BOOLEAN)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function password_error(string $password): ?string
