@@ -12,6 +12,7 @@ final class ABiT_SaaS_Auth_API
 {
     private const SCHEMA_VERSION = '2026-06-14.3';
     private const REST_NAMESPACE = 'abit-ai/v1';
+    private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
     private const REVIEW_STATUS_ONBOARDING_REQUIRED = 'onboarding_required';
     private const REVIEW_STATUS_PENDING_ADMIN_REVIEW = 'pending_admin_review';
@@ -24,8 +25,118 @@ final class ABiT_SaaS_Auth_API
     public static function bootstrap(): void
     {
         add_action('init', [__CLASS__, 'maybe_install_schema']);
+        add_action('phpmailer_init', [__CLASS__, 'configure_transactional_mailer']);
+        add_action('wp_mail_failed', [__CLASS__, 'log_wp_mail_failure']);
+        add_action('wp_mail_succeeded', [__CLASS__, 'log_wp_mail_success']);
+        add_filter('wp_mail_from', [__CLASS__, 'mail_from']);
+        add_filter('wp_mail_from_name', [__CLASS__, 'mail_from_name']);
+        add_filter('retrieve_password_title', [__CLASS__, 'password_reset_subject'], 10, 3);
+        add_filter('retrieve_password_message', [__CLASS__, 'password_reset_message'], 10, 4);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
         add_action('template_redirect', [__CLASS__, 'handle_pretty_api_route'], 0);
+    }
+
+    public static function configure_transactional_mailer($phpmailer): void
+    {
+        if (empty($phpmailer->AltBody) && !empty($phpmailer->Body) && strip_tags($phpmailer->Body) !== $phpmailer->Body) {
+            $phpmailer->AltBody = trim(wp_strip_all_tags(str_replace(['</p>', '<br>', '<br/>', '<br />'], "\n", $phpmailer->Body)));
+        }
+
+        $host = self::env_value('ABIT_TRANSACTIONAL_SMTP_HOST');
+        if ($host === '') {
+            return;
+        }
+
+        $phpmailer->isSMTP();
+        $phpmailer->Host = $host;
+        $phpmailer->Port = (int) (self::env_value('ABIT_TRANSACTIONAL_SMTP_PORT') ?: 587);
+        $phpmailer->SMTPAuth = filter_var(self::env_value('ABIT_TRANSACTIONAL_SMTP_AUTH') ?: 'true', FILTER_VALIDATE_BOOLEAN);
+
+        $username = self::env_value('ABIT_TRANSACTIONAL_SMTP_USERNAME');
+        if ($username !== '') {
+            $phpmailer->Username = $username;
+        }
+
+        $password = self::env_value('ABIT_TRANSACTIONAL_SMTP_PASSWORD');
+        if ($password !== '') {
+            $phpmailer->Password = $password;
+        }
+
+        $secure = strtolower(self::env_value('ABIT_TRANSACTIONAL_SMTP_SECURE') ?: 'tls');
+        if (in_array($secure, ['ssl', 'tls'], true)) {
+            $phpmailer->SMTPSecure = $secure;
+        }
+    }
+
+    public static function log_wp_mail_failure(WP_Error $error): void
+    {
+        self::log_email_delivery(
+            [
+                'message_type' => 'wordpress_mail',
+                'delivery_result' => 'failure',
+                'failure_reason_category' => 'wp_mail_failed',
+                'failure_message' => $error->get_error_message(),
+            ]
+        );
+    }
+
+    public static function log_wp_mail_success(array $mail_data): void
+    {
+        self::log_email_delivery(
+            [
+                'message_type' => 'wordpress_mail',
+                'delivery_result' => 'accepted',
+                'recipient_count' => isset($mail_data['to']) ? count((array) $mail_data['to']) : null,
+                'subject_hash' => isset($mail_data['subject']) ? self::hmac((string) $mail_data['subject']) : '',
+            ]
+        );
+    }
+
+    public static function mail_from(string $from_email): string
+    {
+        return self::transactional_sender_email();
+    }
+
+    public static function mail_from_name(string $from_name): string
+    {
+        return self::transactional_sender_name();
+    }
+
+    public static function password_reset_subject(string $title, string $user_login, WP_User $user_data): string
+    {
+        return apply_filters('abit_saas_auth_password_reset_subject', 'Reset your abit.ai password', $title, $user_login, $user_data);
+    }
+
+    public static function password_reset_message(string $message, string $key, string $user_login, WP_User $user_data): string
+    {
+        $reset_url = add_query_arg(
+            [
+                'key' => $key,
+                'login' => $user_login,
+            ],
+            home_url('/auth/reset-password/')
+        );
+
+        self::log_email_delivery(
+            [
+                'actor_user_id' => (int) $user_data->ID,
+                'message_type' => 'password_reset',
+                'recipient_domain_hash' => self::email_domain_hash((string) $user_data->user_email),
+                'delivery_result' => 'prepared',
+                'delivery_channel' => 'email',
+                'email_delivery_provider' => self::email_delivery_provider(),
+                'sender_email' => self::transactional_sender_email(),
+                'branded_link_path' => '/auth/reset-password/',
+                'has_plaintext_fallback' => false,
+                'subject_key' => 'password_reset',
+            ]
+        );
+
+        return sprintf(
+            "Hi %s,\n\nWe received a request to reset your abit.ai password.\n\nUse this link to set a new password:\n\n%s\n\nIf you did not request a password reset, you can ignore this email.\n\nabit.ai",
+            self::email_display_name((string) $user_data->display_name),
+            $reset_url
+        );
     }
 
     public static function register_routes(): void
@@ -310,7 +421,19 @@ final class ABiT_SaaS_Auth_API
             self::link_latest_consent($access_request_id, $consent_id);
             $token_id = self::insert_verification_token($user_id, $access_request_id, $token_hash, $expires_at, $now);
 
-            $mail_sent = self::send_verification_email($data['business_email'], $data['full_name'], $token);
+            $mail_sent = self::send_verification_email(
+                $data['business_email'],
+                $data['full_name'],
+                $token,
+                [
+                    'actor_user_id' => $user_id,
+                    'access_request_id' => $access_request_id,
+                    'company_id' => $company_id,
+                    'email_verification_token_id' => $token_id,
+                    'token_expires_at' => $expires_at,
+                    'verification_send_reason' => 'initial_signup',
+                ]
+            );
             if (!$mail_sent) {
                 throw new RuntimeException('Verification email could not be sent.');
             }
@@ -362,6 +485,8 @@ final class ABiT_SaaS_Auth_API
                         'email' => $data['business_email'],
                         'verification_send_reason' => 'initial_signup',
                         'verification_delivery_channel' => 'email',
+                        'email_delivery_provider' => self::email_delivery_provider(),
+                        'email_domain_hash' => self::email_domain_hash($data['business_email']),
                         'token_expires_at' => $expires_at,
                     ],
                 ]
@@ -1474,24 +1599,166 @@ final class ABiT_SaaS_Auth_API
         );
     }
 
-    private static function send_verification_email(string $email, string $name, string $token): bool
+    private static function send_verification_email(string $email, string $name, string $token, array $context = []): bool
     {
         $verification_url = add_query_arg(
             [
-                'token' => rawurlencode($token),
-                'email' => rawurlencode($email),
+                'token' => $token,
+                'email' => $email,
             ],
-            home_url('/verify-email/')
+            home_url('/auth/verify/')
         );
 
         $subject = apply_filters('abit_saas_auth_verification_subject', 'Verify your abit.ai access request');
-        $message = sprintf(
-            "Hi %s,\n\nVerify your email address to continue your abit.ai SaaS access request:\n\n%s\n\nThis link expires in 24 hours.",
-            $name,
-            $verification_url
+        $html_message = self::verification_email_html(self::email_display_name($name), $verification_url);
+        $headers = self::transactional_email_headers();
+
+        $sent = (bool) wp_mail($email, $subject, $html_message, $headers);
+        self::log_email_delivery(
+            array_merge(
+                $context,
+                [
+                    'message_type' => 'email_verification',
+                    'recipient_domain_hash' => self::email_domain_hash($email),
+                    'delivery_result' => $sent ? 'accepted' : 'failure',
+                    'delivery_channel' => 'email',
+                    'email_delivery_provider' => self::email_delivery_provider(),
+                    'sender_email' => self::transactional_sender_email(),
+                    'branded_link_path' => '/auth/verify/',
+                    'has_plaintext_fallback' => true,
+                    'subject_key' => 'verification_access_request',
+                ]
+            )
         );
 
-        return (bool) wp_mail($email, $subject, $message);
+        return $sent;
+    }
+
+    private static function transactional_email_headers(): array
+    {
+        $headers = [
+            'Content-Type: text/html; charset=UTF-8',
+            'From: ' . self::transactional_sender_name() . ' <' . self::transactional_sender_email() . '>',
+        ];
+
+        $reply_to = self::transactional_reply_to_email();
+        if ($reply_to !== '') {
+            $headers[] = 'Reply-To: ' . $reply_to;
+        }
+
+        return $headers;
+    }
+
+    private static function verification_email_html(string $name, string $verification_url): string
+    {
+        $safe_name = esc_html($name);
+        $safe_url = esc_url($verification_url);
+
+        return '<!doctype html><html><body style="margin:0;background:#f6f7f9;color:#17202a;font-family:Arial,Helvetica,sans-serif;">'
+            . '<div style="max-width:560px;margin:0 auto;padding:32px 20px;">'
+            . '<div style="background:#ffffff;border:1px solid #e1e5ea;border-radius:8px;padding:28px;">'
+            . '<div style="font-size:20px;font-weight:700;margin-bottom:24px;">abit.ai</div>'
+            . '<h1 style="font-size:24px;line-height:1.25;margin:0 0 16px;">Verify your email to continue</h1>'
+            . '<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">Hi ' . $safe_name . ',</p>'
+            . '<p style="font-size:15px;line-height:1.6;margin:0 0 24px;">Confirm your business email address to continue your abit.ai access request.</p>'
+            . '<p style="margin:0 0 24px;"><a href="' . $safe_url . '" style="display:inline-block;background:#17202a;color:#ffffff;text-decoration:none;border-radius:6px;padding:12px 18px;font-size:15px;font-weight:700;">Verify email</a></p>'
+            . '<p style="font-size:13px;line-height:1.6;margin:0 0 16px;color:#4b5563;">This link expires in 24 hours. If the button does not work, copy and paste this link into your browser:</p>'
+            . '<p style="font-size:13px;line-height:1.6;margin:0;word-break:break-all;color:#374151;">' . $safe_url . '</p>'
+            . '</div>'
+            . '<p style="font-size:12px;line-height:1.5;margin:16px 0 0;color:#6b7280;">If you did not request access to abit.ai, you can ignore this email.</p>'
+            . '</div></body></html>';
+    }
+
+    private static function log_email_delivery(array $data): void
+    {
+        $event_data = array_merge(
+            [
+                'delivery_channel' => 'email',
+                'email_delivery_provider' => self::email_delivery_provider(),
+                'sender_domain' => self::APPROVED_SENDER_DOMAIN,
+                'logged_at' => current_time('mysql', true),
+            ],
+            $data
+        );
+
+        $context = [
+            'actor_type' => 'system',
+            'entity_type' => (string) ($data['message_type'] ?? 'email'),
+            'event_data' => $event_data,
+        ];
+
+        foreach (['actor_user_id', 'access_request_id', 'company_id'] as $key) {
+            if (isset($data[$key])) {
+                $context[$key] = (int) $data[$key];
+            }
+        }
+
+        if (isset($data['email_verification_token_id'])) {
+            $context['entity_id'] = (int) $data['email_verification_token_id'];
+        }
+
+        self::audit_event('auth_email_delivery_attempted', $context);
+
+        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+            error_log('abit.ai auth email delivery: ' . wp_json_encode($event_data));
+        }
+    }
+
+    private static function transactional_sender_email(): string
+    {
+        $email = sanitize_email(self::env_value('ABIT_TRANSACTIONAL_MAIL_FROM_EMAIL') ?: 'no-reply@abit.ai');
+        if ($email === '' || !self::is_approved_sender_email($email)) {
+            return 'no-reply@abit.ai';
+        }
+
+        return $email;
+    }
+
+    private static function transactional_sender_name(): string
+    {
+        $name = trim(self::env_value('ABIT_TRANSACTIONAL_MAIL_FROM_NAME') ?: 'abit.ai');
+        return $name === '' ? 'abit.ai' : sanitize_text_field($name);
+    }
+
+    private static function transactional_reply_to_email(): string
+    {
+        $email = sanitize_email(self::env_value('ABIT_TRANSACTIONAL_MAIL_REPLY_TO') ?: 'support@abit.ai');
+        return is_email($email) ? $email : '';
+    }
+
+    private static function email_delivery_provider(): string
+    {
+        $provider = sanitize_key(self::env_value('ABIT_TRANSACTIONAL_MAIL_PROVIDER') ?: 'wordpress');
+        return $provider === '' ? 'wordpress' : $provider;
+    }
+
+    private static function email_display_name(string $name): string
+    {
+        $name = trim($name);
+        return $name === '' ? 'there' : $name;
+    }
+
+    private static function email_domain_hash(string $email): string
+    {
+        $parts = explode('@', strtolower(trim($email)));
+        $domain = count($parts) === 2 ? $parts[1] : '';
+        return $domain === '' ? '' : self::hmac($domain);
+    }
+
+    private static function is_approved_sender_email(string $email): bool
+    {
+        $parts = explode('@', strtolower($email));
+        return count($parts) === 2 && $parts[1] === self::APPROVED_SENDER_DOMAIN;
+    }
+
+    private static function env_value(string $name): string
+    {
+        if (defined($name)) {
+            return trim((string) constant($name));
+        }
+
+        $value = getenv($name);
+        return false === $value ? '' : trim((string) $value);
     }
 
     private static function field_error_response(array $field_errors, int $status = 422): WP_REST_Response

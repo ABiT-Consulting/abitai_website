@@ -89,6 +89,25 @@ define( 'WP_DEBUG', false );
 
 /* Add any custom values between this line and the "stop editing" line. */
 
+/**
+ * ABiT SaaS auth transactional email.
+ *
+ * Configure these from environment variables or deployment secrets in production.
+ * The From address is intentionally limited by the auth plugin to the approved
+ * abit.ai sender domain.
+ */
+define( 'ABIT_TRANSACTIONAL_MAIL_PROVIDER', getenv( 'ABIT_TRANSACTIONAL_MAIL_PROVIDER' ) ?: 'wordpress' );
+define( 'ABIT_TRANSACTIONAL_MAIL_FROM_EMAIL', getenv( 'ABIT_TRANSACTIONAL_MAIL_FROM_EMAIL' ) ?: 'no-reply@abit.ai' );
+define( 'ABIT_TRANSACTIONAL_MAIL_FROM_NAME', getenv( 'ABIT_TRANSACTIONAL_MAIL_FROM_NAME' ) ?: 'abit.ai' );
+define( 'ABIT_TRANSACTIONAL_MAIL_REPLY_TO', getenv( 'ABIT_TRANSACTIONAL_MAIL_REPLY_TO' ) ?: 'support@abit.ai' );
+
+// Optional SMTP transport. Leave host empty to use the host's default wp_mail transport.
+define( 'ABIT_TRANSACTIONAL_SMTP_HOST', getenv( 'ABIT_TRANSACTIONAL_SMTP_HOST' ) ?: '' );
+define( 'ABIT_TRANSACTIONAL_SMTP_PORT', getenv( 'ABIT_TRANSACTIONAL_SMTP_PORT' ) ?: '587' );
+define( 'ABIT_TRANSACTIONAL_SMTP_SECURE', getenv( 'ABIT_TRANSACTIONAL_SMTP_SECURE' ) ?: 'tls' );
+define( 'ABIT_TRANSACTIONAL_SMTP_AUTH', getenv( 'ABIT_TRANSACTIONAL_SMTP_AUTH' ) ?: 'true' );
+define( 'ABIT_TRANSACTIONAL_SMTP_USERNAME', getenv( 'ABIT_TRANSACTIONAL_SMTP_USERNAME' ) ?: '' );
+define( 'ABIT_TRANSACTIONAL_SMTP_PASSWORD', getenv( 'ABIT_TRANSACTIONAL_SMTP_PASSWORD' ) ?: '' );
 
 
 /* That's all, stop editing! Happy publishing. */
