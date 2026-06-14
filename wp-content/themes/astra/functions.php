@@ -1019,6 +1019,43 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 			update_user_meta( $user_id, 'abitai_erp_module_interest', $erp_module_interest );
 		}
 
+		if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+			$company_id = absint( get_user_meta( $user_id, 'abitai_company_id', true ) );
+			abitai_auth_write_audit_log(
+				'auth_signup_created',
+				array(
+					'actor_user_id' => $user_id,
+					'actor_type'    => 'user',
+					'entity_type'   => 'user',
+					'entity_id'     => $user_id,
+					'company_id'    => $company_id,
+					'event_data'    => array(
+						'email'                       => $email,
+						'review_status'               => 'pending_email_verification',
+						'signup_flow_version'         => $requires_company ? 'company_step' : 'account_step',
+						'terms_privacy_acceptance'    => true,
+						'company_profile_included'    => $requires_company,
+						'erp_module_interest_count'   => count( $erp_module_interest ),
+					),
+				)
+			);
+			abitai_auth_write_audit_log(
+				'auth_consent_accepted',
+				array(
+					'actor_user_id' => $user_id,
+					'actor_type'    => 'user',
+					'entity_type'   => 'user',
+					'entity_id'     => $user_id,
+					'company_id'    => $company_id,
+					'event_data'    => array(
+						'email'          => $email,
+						'capture_source' => 'signup_account_step',
+						'accepted_at'    => current_time( 'mysql', true ),
+					),
+				)
+			);
+		}
+
 		wp_set_current_user( $user_id );
 		wp_set_auth_cookie( $user_id );
 
@@ -1299,6 +1336,22 @@ if ( ! function_exists( 'abitai_handle_mock_sign_in' ) ) {
 		$key   = strtolower( $email );
 
 		if ( '' === $email || '' === $password || ! isset( $users[ $key ] ) || ! hash_equals( $users[ $key ]['password'], $password ) ) {
+			if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+				abitai_auth_write_audit_log(
+					'auth_login_failed',
+					array(
+						'actor_type'  => 'anonymous',
+						'entity_type' => 'auth',
+						'event_data'  => array(
+							'email'                   => $email,
+							'auth_method'             => 'email_password',
+							'login_attempt_result'    => 'failure',
+							'failure_reason_category' => 'invalid_credentials',
+							'source'                  => 'frontend_mock',
+						),
+					)
+				);
+			}
 			wp_safe_redirect(
 				add_query_arg(
 					array(
@@ -1309,6 +1362,23 @@ if ( ! function_exists( 'abitai_handle_mock_sign_in' ) ) {
 				)
 			);
 			exit;
+		}
+
+		if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+			abitai_auth_write_audit_log(
+				'auth_login_succeeded',
+				array(
+					'actor_type'  => 'mock_user',
+					'entity_type' => 'auth',
+					'event_data'  => array(
+						'email'                => $email,
+						'auth_method'          => 'email_password',
+						'login_attempt_result' => 'success',
+						'review_status'        => $users[ $key ]['status'],
+						'source'               => 'frontend_mock',
+					),
+				)
+			);
 		}
 
 		wp_safe_redirect( abitai_get_mock_auth_redirect_url( $users[ $key ]['status'], $email ) );
@@ -1345,6 +1415,21 @@ if ( ! function_exists( 'abitai_handle_mock_resend_verification' ) ) {
 		}
 
 		if ( 'rate_limited' === $mock_response || 'cooldown' === $mock_response || false !== strpos( strtolower( $email ), 'cooldown' ) ) {
+			if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+				abitai_auth_write_audit_log(
+					'auth_verification_resend',
+					array(
+						'actor_type'  => is_user_logged_in() ? 'user' : 'anonymous',
+						'entity_type' => 'email_verification',
+						'event_data'  => array(
+							'email'                    => $email,
+							'verification_send_reason' => 'resend',
+							'result'                   => 'rate_limited',
+							'source'                   => 'frontend_mock',
+						),
+					)
+				);
+			}
 			wp_safe_redirect(
 				add_query_arg(
 					array(
@@ -1355,6 +1440,22 @@ if ( ! function_exists( 'abitai_handle_mock_resend_verification' ) ) {
 				)
 			);
 			exit;
+		}
+
+		if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+			abitai_auth_write_audit_log(
+				'auth_verification_resend',
+				array(
+					'actor_type'  => is_user_logged_in() ? 'user' : 'anonymous',
+					'entity_type' => 'email_verification',
+					'event_data'  => array(
+						'email'                    => $email,
+						'verification_send_reason' => 'resend',
+						'result'                   => 'accepted',
+						'source'                   => 'frontend_mock',
+					),
+				)
+			);
 		}
 
 		wp_safe_redirect(
@@ -1393,8 +1494,37 @@ if ( ! function_exists( 'abitai_handle_mock_password_reset_request' ) ) {
 		}
 
 		if ( 'rate_limited' === $mock_response || 'cooldown' === $mock_response || false !== strpos( strtolower( $email ), 'cooldown' ) ) {
+			if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+				abitai_auth_write_audit_log(
+					'auth_password_reset_requested',
+					array(
+						'actor_type'  => 'anonymous',
+						'entity_type' => 'password_reset',
+						'event_data'  => array(
+							'email'                => $email,
+							'reset_request_result' => 'rate_limited',
+							'source'               => 'frontend_mock',
+						),
+					)
+				);
+			}
 			wp_safe_redirect( add_query_arg( 'reset_error', 'rate_limited', $redirect_url ) );
 			exit;
+		}
+
+		if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+			abitai_auth_write_audit_log(
+				'auth_password_reset_requested',
+				array(
+					'actor_type'  => 'anonymous',
+					'entity_type' => 'password_reset',
+					'event_data'  => array(
+						'email'                => $email,
+						'reset_request_result' => 'accepted_generic_response',
+						'source'               => 'frontend_mock',
+					),
+				)
+			);
 		}
 
 		wp_safe_redirect( add_query_arg( 'state', 'accepted', $redirect_url ) );
@@ -1431,11 +1561,37 @@ if ( ! function_exists( 'abitai_handle_mock_password_reset_submit' ) ) {
 		}
 
 		if ( 'expired-reset-token' === $token || 'expired' === $token ) {
+			if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+				abitai_auth_write_audit_log(
+					'auth_password_reset_completed',
+					array(
+						'actor_type'  => 'anonymous',
+						'entity_type' => 'password_reset',
+						'event_data'  => array(
+							'reset_attempt_result' => 'expired_token',
+							'source'               => 'frontend_mock',
+						),
+					)
+				);
+			}
 			wp_safe_redirect( add_query_arg( 'state', 'expired', home_url( '/auth/reset-password' ) ) );
 			exit;
 		}
 
 		if ( '' === $token || 'used-reset-token' === $token || 'invalid-reset-token' === $token || 'invalid' === $token ) {
+			if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+				abitai_auth_write_audit_log(
+					'auth_password_reset_completed',
+					array(
+						'actor_type'  => 'anonymous',
+						'entity_type' => 'password_reset',
+						'event_data'  => array(
+							'reset_attempt_result' => 'invalid_token',
+							'source'               => 'frontend_mock',
+						),
+					)
+				);
+			}
 			wp_safe_redirect( add_query_arg( 'state', 'invalid', home_url( '/auth/reset-password' ) ) );
 			exit;
 		}
@@ -1463,6 +1619,20 @@ if ( ! function_exists( 'abitai_handle_mock_password_reset_submit' ) ) {
 		if ( ! hash_equals( $password, $confirm_password ) ) {
 			wp_safe_redirect( add_query_arg( 'reset_error', 'mismatch', $set_url ) );
 			exit;
+		}
+
+		if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+			abitai_auth_write_audit_log(
+				'auth_password_reset_completed',
+				array(
+					'actor_type'  => 'anonymous',
+					'entity_type' => 'password_reset',
+					'event_data'  => array(
+						'reset_attempt_result' => 'success',
+						'source'               => 'frontend_mock',
+					),
+				)
+			);
 		}
 
 		wp_safe_redirect( add_query_arg( 'state', 'success', home_url( '/auth/reset-password' ) ) );

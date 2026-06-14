@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 if ( ! defined( 'ABITAI_AUTH_SCHEMA_VERSION' ) ) {
-	define( 'ABITAI_AUTH_SCHEMA_VERSION', '2026.06.14.1' );
+	define( 'ABITAI_AUTH_SCHEMA_VERSION', '2026.06.14.2' );
 }
 
 if ( ! function_exists( 'abitai_auth_schema_table_names' ) ) {
@@ -35,6 +35,232 @@ if ( ! function_exists( 'abitai_auth_schema_table_names' ) ) {
 			'audit_logs'      => $wpdb->prefix . 'abitai_audit_logs',
 		);
 	}
+}
+
+if ( ! function_exists( 'abitai_auth_hash_value' ) ) {
+	/**
+	 * Hash sensitive audit values before persistence.
+	 *
+	 * @param string $value Raw value.
+	 * @return string
+	 */
+	function abitai_auth_hash_value( $value ) {
+		$value = (string) $value;
+
+		if ( defined( 'ABIT_SAAS_AUTH_HASH_KEY' ) && ABIT_SAAS_AUTH_HASH_KEY ) {
+			$key = ABIT_SAAS_AUTH_HASH_KEY;
+		} else {
+			$key = wp_salt( 'auth' );
+		}
+
+		return hash_hmac( 'sha256', $value, $key );
+	}
+}
+
+if ( ! function_exists( 'abitai_auth_hash_key_version' ) ) {
+	/**
+	 * Return the configured hash key version for audit rows.
+	 *
+	 * @return string
+	 */
+	function abitai_auth_hash_key_version() {
+		return defined( 'ABIT_SAAS_AUTH_HASH_KEY_VERSION' ) ? ABIT_SAAS_AUTH_HASH_KEY_VERSION : 'wp-auth-salt-v1';
+	}
+}
+
+if ( ! function_exists( 'abitai_auth_request_ip' ) ) {
+	/**
+	 * Resolve the request IP without storing the raw value.
+	 *
+	 * @return string
+	 */
+	function abitai_auth_request_ip() {
+		$headers = array(
+			'HTTP_CF_CONNECTING_IP',
+			'HTTP_X_FORWARDED_FOR',
+			'REMOTE_ADDR',
+		);
+
+		foreach ( $headers as $header ) {
+			if ( empty( $_SERVER[ $header ] ) ) {
+				continue;
+			}
+
+			$value = trim( explode( ',', (string) $_SERVER[ $header ] )[0] );
+			if ( filter_var( $value, FILTER_VALIDATE_IP ) ) {
+				return $value;
+			}
+		}
+
+		return '';
+	}
+}
+
+if ( ! function_exists( 'abitai_auth_redact_audit_data' ) ) {
+	/**
+	 * Normalize event metadata and remove raw sensitive values.
+	 *
+	 * @param array<string,mixed> $data Event metadata.
+	 * @return array<string,mixed>
+	 */
+	function abitai_auth_redact_audit_data( $data ) {
+		$redacted = array();
+
+		foreach ( (array) $data as $key => $value ) {
+			$key = sanitize_key( $key );
+
+			if ( '' === $key || in_array( $key, array( 'password', 'token', 'raw_token', 'session_token', 'ip', 'user_agent' ), true ) ) {
+				continue;
+			}
+
+			if ( in_array( $key, array( 'email', 'business_email' ), true ) ) {
+				$email = strtolower( sanitize_email( (string) $value ) );
+				if ( '' !== $email ) {
+					$redacted[ $key . '_hash' ] = abitai_auth_hash_value( $email );
+					$parts                     = explode( '@', $email );
+					if ( isset( $parts[1] ) ) {
+						$redacted['email_domain_hash'] = abitai_auth_hash_value( strtolower( $parts[1] ) );
+					}
+				}
+				continue;
+			}
+
+			if ( is_bool( $value ) ) {
+				$redacted[ $key ] = $value;
+				continue;
+			}
+
+			if ( is_int( $value ) || is_float( $value ) ) {
+				$redacted[ $key ] = $value;
+				continue;
+			}
+
+			if ( is_array( $value ) ) {
+				$redacted[ $key ] = array_map( 'sanitize_text_field', array_map( 'strval', array_values( $value ) ) );
+				continue;
+			}
+
+			$redacted[ $key ] = sanitize_text_field( (string) $value );
+		}
+
+		return $redacted;
+	}
+}
+
+if ( ! function_exists( 'abitai_auth_write_audit_log' ) ) {
+	/**
+	 * Write a redacted auth audit event row.
+	 *
+	 * @param string              $event_type Audit event type.
+	 * @param array<string,mixed> $context Event context.
+	 * @return int Inserted audit row ID, or 0 when unavailable.
+	 */
+	function abitai_auth_write_audit_log( $event_type, $context = array() ) {
+		if ( ! function_exists( 'abitai_auth_schema_table_names' ) ) {
+			return 0;
+		}
+
+		global $wpdb;
+
+		$tables = abitai_auth_schema_table_names();
+		if ( empty( $tables['audit_logs'] ) ) {
+			return 0;
+		}
+
+		$table_exists = $tables['audit_logs'] === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $tables['audit_logs'] ) );
+		if ( ! $table_exists ) {
+			abitai_auth_maybe_install_schema();
+		}
+
+		$event_type        = sanitize_key( $event_type );
+		$actor_user_id     = isset( $context['actor_user_id'] ) ? absint( $context['actor_user_id'] ) : get_current_user_id();
+		$actor_type        = isset( $context['actor_type'] ) ? sanitize_key( $context['actor_type'] ) : ( $actor_user_id > 0 ? 'user' : 'anonymous' );
+		$entity_type       = isset( $context['entity_type'] ) ? sanitize_key( $context['entity_type'] ) : 'auth';
+		$entity_id         = isset( $context['entity_id'] ) ? absint( $context['entity_id'] ) : 0;
+		$access_request_id = isset( $context['access_request_id'] ) ? absint( $context['access_request_id'] ) : 0;
+		$company_id        = isset( $context['company_id'] ) ? absint( $context['company_id'] ) : 0;
+		$session_id        = isset( $context['session_id'] ) ? absint( $context['session_id'] ) : 0;
+		$event_data        = isset( $context['event_data'] ) && is_array( $context['event_data'] ) ? $context['event_data'] : array();
+
+		$inserted = $wpdb->insert(
+			$tables['audit_logs'],
+			array(
+				'audit_uuid'        => wp_generate_uuid4(),
+				'actor_user_id'     => $actor_user_id > 0 ? $actor_user_id : null,
+				'actor_type'        => $actor_type,
+				'event_type'        => $event_type,
+				'entity_type'       => $entity_type,
+				'entity_id'         => $entity_id > 0 ? $entity_id : null,
+				'access_request_id' => $access_request_id > 0 ? $access_request_id : null,
+				'company_id'        => $company_id > 0 ? $company_id : null,
+				'session_id'        => $session_id > 0 ? $session_id : null,
+				'ip_hash'           => abitai_auth_hash_value( abitai_auth_request_ip() ),
+				'user_agent_hash'   => abitai_auth_hash_value( isset( $_SERVER['HTTP_USER_AGENT'] ) ? (string) $_SERVER['HTTP_USER_AGENT'] : '' ),
+				'hash_key_version'  => abitai_auth_hash_key_version(),
+				'event_data'        => wp_json_encode( abitai_auth_redact_audit_data( $event_data ) ),
+				'created_at'        => current_time( 'mysql', true ),
+			),
+			array( '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s' )
+		);
+
+		return false === $inserted ? 0 : absint( $wpdb->insert_id );
+	}
+}
+
+if ( ! function_exists( 'abitai_auth_audit_status_meta_change' ) ) {
+	/**
+	 * Audit admin review decisions and email verification state changes persisted via user meta.
+	 *
+	 * @param int    $meta_id Meta row ID.
+	 * @param int    $user_id User ID.
+	 * @param string $meta_key Meta key.
+	 * @param mixed  $meta_value New value.
+	 */
+	function abitai_auth_audit_status_meta_change( $meta_id, $user_id, $meta_key, $meta_value ) {
+		if ( in_array( $meta_key, array( 'abitai_email_verified_at', 'abit_saas_email_verified_at' ), true ) && '' !== (string) $meta_value ) {
+			abitai_auth_write_audit_log(
+				'auth_email_verified',
+				array(
+					'actor_user_id' => absint( $user_id ),
+					'actor_type'    => 'user',
+					'entity_type'   => 'user',
+					'entity_id'     => absint( $user_id ),
+					'event_data'    => array(
+						'result'      => 'success',
+						'verified_at' => (string) $meta_value,
+					),
+				)
+			);
+			return;
+		}
+
+		if ( ! in_array( $meta_key, array( 'abitai_access_request_status', 'abit_saas_review_status' ), true ) ) {
+			return;
+		}
+
+		$new_status        = sanitize_key( (string) $meta_value );
+		$decision_statuses = array( 'approved_for_mvp_access', 'rejected', 'more_information_requested' );
+		if ( ! in_array( $new_status, $decision_statuses, true ) ) {
+			return;
+		}
+
+		abitai_auth_write_audit_log(
+			'auth_admin_decision',
+			array(
+				'actor_user_id' => get_current_user_id(),
+				'actor_type'    => current_user_can( 'manage_options' ) ? 'admin' : 'system',
+				'entity_type'   => 'user',
+				'entity_id'     => absint( $user_id ),
+				'company_id'    => absint( get_user_meta( $user_id, 'abitai_company_id', true ) ),
+				'event_data'    => array(
+					'decision_status' => $new_status,
+					'meta_key'        => $meta_key,
+				),
+			)
+		);
+	}
+	add_action( 'added_user_meta', 'abitai_auth_audit_status_meta_change', 10, 4 );
+	add_action( 'updated_user_meta', 'abitai_auth_audit_status_meta_change', 10, 4 );
 }
 
 if ( ! function_exists( 'abitai_auth_schema_definitions' ) ) {

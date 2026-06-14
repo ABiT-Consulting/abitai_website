@@ -316,6 +316,56 @@ final class ABiT_SaaS_Auth_API
             }
 
             self::mark_token_sent($token_id);
+            self::audit_event(
+                'auth_signup_created',
+                [
+                    'actor_user_id' => $user_id,
+                    'actor_type' => 'user',
+                    'entity_type' => 'access_request',
+                    'entity_id' => $access_request_id,
+                    'access_request_id' => $access_request_id,
+                    'company_id' => $company_id,
+                    'event_data' => [
+                        'email' => $data['business_email'],
+                        'review_status' => self::REVIEW_STATUS_PENDING_EMAIL,
+                        'signup_flow_version' => 'api_v1',
+                        'account_creation_method' => 'email_password',
+                    ],
+                ]
+            );
+            self::audit_event(
+                'auth_consent_accepted',
+                [
+                    'actor_user_id' => $user_id,
+                    'actor_type' => 'user',
+                    'entity_type' => 'consent',
+                    'entity_id' => $consent_id,
+                    'access_request_id' => $access_request_id,
+                    'company_id' => $company_id,
+                    'event_data' => [
+                        'email' => $data['business_email'],
+                        'consent_audit_record_id' => $consent_id,
+                        'capture_source' => 'signup_registration',
+                    ],
+                ]
+            );
+            self::audit_event(
+                'auth_verification_sent',
+                [
+                    'actor_user_id' => $user_id,
+                    'actor_type' => 'system',
+                    'entity_type' => 'email_verification_token',
+                    'entity_id' => $token_id,
+                    'access_request_id' => $access_request_id,
+                    'company_id' => $company_id,
+                    'event_data' => [
+                        'email' => $data['business_email'],
+                        'verification_send_reason' => 'initial_signup',
+                        'verification_delivery_channel' => 'email',
+                        'token_expires_at' => $expires_at,
+                    ],
+                ]
+            );
             $wpdb->query('COMMIT');
 
             return new WP_REST_Response(
@@ -360,12 +410,43 @@ final class ABiT_SaaS_Auth_API
         $user = get_user_by('email', $email);
 
         if (!$user instanceof WP_User || !wp_check_password($password, $user->user_pass, $user->ID)) {
+            self::audit_event(
+                'auth_login_failed',
+                [
+                    'actor_type' => 'anonymous',
+                    'entity_type' => 'auth',
+                    'event_data' => [
+                        'email' => $email,
+                        'auth_method' => 'email_password',
+                        'login_attempt_result' => 'failure',
+                        'failure_reason_category' => 'invalid_credentials',
+                    ],
+                ]
+            );
             return self::login_failed_response();
         }
 
         $account_state = self::account_state_for_user($user);
         if (!empty($account_state['locked'])) {
             wp_clear_auth_cookie();
+            self::audit_event(
+                'auth_login_failed',
+                [
+                    'actor_user_id' => (int) $user->ID,
+                    'actor_type' => 'user',
+                    'entity_type' => 'user',
+                    'entity_id' => (int) $user->ID,
+                    'access_request_id' => $account_state['access_request_id'],
+                    'company_id' => $account_state['company_id'],
+                    'event_data' => [
+                        'email' => $email,
+                        'auth_method' => 'email_password',
+                        'login_attempt_result' => 'failure',
+                        'failure_reason_category' => 'blocked',
+                        'review_status' => $account_state['review_status'],
+                    ],
+                ]
+            );
             return new WP_REST_Response(
                 [
                     'message' => 'This account cannot sign in right now. Contact support for help.',
@@ -380,6 +461,25 @@ final class ABiT_SaaS_Auth_API
         wp_set_current_user($user->ID);
         wp_set_auth_cookie($user->ID, $remember, is_ssl());
         do_action('wp_login', $user->user_login, $user);
+        self::audit_event(
+            'auth_login_succeeded',
+            [
+                'actor_user_id' => (int) $user->ID,
+                'actor_type' => 'user',
+                'entity_type' => 'user',
+                'entity_id' => (int) $user->ID,
+                'access_request_id' => $account_state['access_request_id'],
+                'company_id' => $account_state['company_id'],
+                'event_data' => [
+                    'email' => $email,
+                    'auth_method' => 'email_password',
+                    'login_attempt_result' => 'success',
+                    'review_status' => $account_state['review_status'],
+                    'is_email_verified' => $account_state['email_verified'],
+                    'is_admin_approved' => $account_state['review_status'] === self::REVIEW_STATUS_APPROVED,
+                ],
+            ]
+        );
 
         return new WP_REST_Response(
             [
@@ -406,6 +506,17 @@ final class ABiT_SaaS_Auth_API
         if ($user_id <= 0 || $session_token === '') {
             wp_clear_auth_cookie();
             wp_set_current_user(0);
+            self::audit_event(
+                'auth_logout',
+                [
+                    'actor_type' => 'anonymous',
+                    'entity_type' => 'session',
+                    'event_data' => [
+                        'logout_result' => 'no_active_session',
+                        'revoked' => false,
+                    ],
+                ]
+            );
 
             return new WP_REST_Response(
                 [
@@ -418,8 +529,25 @@ final class ABiT_SaaS_Auth_API
         }
 
         WP_Session_Tokens::get_instance($user_id)->destroy($session_token);
+        $user = get_userdata($user_id);
+        $account_state = $user instanceof WP_User ? self::account_state_for_user($user) : [];
         wp_clear_auth_cookie();
         wp_set_current_user(0);
+        self::audit_event(
+            'auth_logout',
+            [
+                'actor_user_id' => $user_id,
+                'actor_type' => 'user',
+                'entity_type' => 'session',
+                'entity_id' => $user_id,
+                'access_request_id' => $account_state['access_request_id'] ?? null,
+                'company_id' => $account_state['company_id'] ?? null,
+                'event_data' => [
+                    'logout_result' => 'revoked',
+                    'revoked' => true,
+                ],
+            ]
+        );
 
         return new WP_REST_Response(
             [
@@ -529,6 +657,23 @@ final class ABiT_SaaS_Auth_API
             );
         }
 
+        self::audit_event(
+            'auth_provisioning_requested',
+            [
+                'actor_user_id' => (int) $user->ID,
+                'actor_type' => 'user',
+                'entity_type' => 'provisioning_request',
+                'entity_id' => (int) $provisioning_request['id'],
+                'access_request_id' => (int) $access_request['id'],
+                'company_id' => (int) $access_request['company_id'],
+                'event_data' => [
+                    'request_status' => $provisioning_request['request_status'],
+                    'review_status' => $account_state['review_status'],
+                    'created' => !empty($provisioning_request['_created']),
+                ],
+            ]
+        );
+
         return new WP_REST_Response(
             [
                 'message' => 'Provisioning request recorded.',
@@ -554,6 +699,13 @@ final class ABiT_SaaS_Auth_API
             'Authentication is required.',
             ['status' => 401]
         );
+    }
+
+    private static function audit_event(string $event_type, array $context): void
+    {
+        if (function_exists('abitai_auth_write_audit_log')) {
+            abitai_auth_write_audit_log($event_type, $context);
+        }
     }
 
     private static function request_payload(WP_REST_Request $request): array

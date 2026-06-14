@@ -533,6 +533,28 @@ if ( ! function_exists( 'abitai_company_profile_update' ) ) {
 		abitai_company_profile_update_user_meta( $wp_user_id, $payload );
 		$table_result = abitai_company_profile_upsert_tables( $wp_user_id, $payload );
 
+		if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
+			abitai_auth_write_audit_log(
+				'auth_onboarding_completed',
+				array(
+					'actor_user_id'     => $wp_user_id,
+					'actor_type'        => 'user',
+					'entity_type'       => 'access_request',
+					'entity_id'         => $table_result['access_request_id'],
+					'access_request_id' => $table_result['access_request_id'],
+					'company_id'        => $table_result['company_id'] ? $table_result['company_id'] : $owned_company_id,
+					'event_data'        => array(
+						'review_status'              => 'pending_admin_review',
+						'onboarding_completed_step'  => 'erp_needs',
+						'company_size'               => $payload['company_size'],
+						'industry'                   => $payload['industry'],
+						'country_region'             => $payload['country_region'],
+						'erp_module_interest_count'  => count( $payload['erp_module_interest'] ),
+					),
+				)
+			);
+		}
+
 		return rest_ensure_response(
 			array(
 				'success'       => true,
