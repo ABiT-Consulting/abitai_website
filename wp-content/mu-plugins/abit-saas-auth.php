@@ -1767,7 +1767,7 @@ final class ABiT_SaaS_Auth_API
         if (empty($module_interest_value)) {
             $module_interest_value = get_user_meta($user->ID, 'abitai_erp_module_interest', true);
         }
-        $module_interest = self::decode_list_value($module_interest_value);
+        $module_interest = self::normalize_erp_module_interests(self::decode_list_value($module_interest_value));
         $primary_workflow = self::first_non_empty([
             $access_request['primary_workflow'] ?? null,
             get_user_meta($user->ID, 'abitai_business_description', true),
@@ -1798,6 +1798,17 @@ final class ABiT_SaaS_Auth_API
             self::REVIEW_STATUS_REJECTED,
         ];
 
+        $module_mapping = self::erp_onboarding_module_mapping($module_interest);
+        $admin_review_fields = self::onboarding_admin_review_fields(
+            $access_request,
+            $role,
+            $company_size,
+            $industry,
+            $primary_workflow,
+            $module_interest,
+            $module_mapping
+        );
+
         return [
             'status' => self::onboarding_status($review_status, $required_fields_complete),
             'completed' => in_array($review_status, $complete_statuses, true),
@@ -1807,6 +1818,9 @@ final class ABiT_SaaS_Auth_API
             'industry' => $industry,
             'primary_workflow_provided' => $primary_workflow !== '',
             'erp_module_interest' => $module_interest,
+            'onboarding_templates' => $module_mapping['onboarding_templates'],
+            'qualification_tags' => $module_mapping['qualification_tags'],
+            'admin_review_fields' => $admin_review_fields,
             'current_system' => self::first_non_empty([
                 $access_request['current_system'] ?? null,
             ]),
@@ -1814,6 +1828,190 @@ final class ABiT_SaaS_Auth_API
                 $access_request['timeline'] ?? null,
             ]),
         ];
+    }
+
+    private static function normalize_erp_module_interests(array $module_interest): array
+    {
+        $aliases = [
+            'accounts' => 'accounting',
+            'finance' => 'accounting',
+            'financials' => 'accounting',
+            'selling' => 'sales',
+            'sales_crm' => 'sales',
+            'purchase' => 'buying',
+            'purchasing' => 'buying',
+            'inventory' => 'stock',
+            'inventory_valuation' => 'stock',
+            'warehouse' => 'stock',
+            'hr' => 'hr_payroll',
+            'payroll' => 'hr_payroll',
+            'support' => 'support_helpdesk',
+            'helpdesk' => 'support_helpdesk',
+            'portal' => 'website_portal',
+            'website' => 'website_portal',
+            'reports' => 'reports_analytics',
+            'analytics' => 'reports_analytics',
+            'full_erp' => 'full_erp_evaluation',
+            'full_evaluation' => 'full_erp_evaluation',
+            'unsure' => 'not_sure',
+            'not-sure' => 'not_sure',
+        ];
+        $valid_modules = [
+            'accounting',
+            'crm',
+            'sales',
+            'buying',
+            'stock',
+            'manufacturing',
+            'projects',
+            'hr_payroll',
+            'support_helpdesk',
+            'website_portal',
+            'reports_analytics',
+            'integrations',
+            'full_erp_evaluation',
+            'not_sure',
+        ];
+
+        $normalized = [];
+        foreach ($module_interest as $module) {
+            $key = sanitize_key((string) $module);
+            if ($key === '') {
+                continue;
+            }
+
+            $key = $aliases[$key] ?? $key;
+            if (!in_array($key, $valid_modules, true)) {
+                continue;
+            }
+
+            $normalized[] = $key;
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
+    private static function erp_onboarding_module_mapping(array $module_interest): array
+    {
+        $definitions = [
+            'accounting' => [
+                'template' => 'erpnext_finance_onboarding',
+                'tags' => ['module:finance', 'workflow:financial_controls', 'qualification:finance_review'],
+            ],
+            'crm' => [
+                'template' => 'erpnext_crm_onboarding',
+                'tags' => ['module:crm', 'workflow:pipeline_management'],
+            ],
+            'sales' => [
+                'template' => 'erpnext_sales_onboarding',
+                'tags' => ['module:sales', 'workflow:order_to_cash'],
+            ],
+            'buying' => [
+                'template' => 'erpnext_procurement_onboarding',
+                'tags' => ['module:procurement', 'workflow:purchase_to_pay'],
+            ],
+            'stock' => [
+                'template' => 'erpnext_inventory_onboarding',
+                'tags' => ['module:inventory', 'workflow:stock_control', 'qualification:inventory_review'],
+            ],
+            'manufacturing' => [
+                'template' => 'erpnext_manufacturing_onboarding',
+                'tags' => ['module:manufacturing', 'workflow:production_planning'],
+            ],
+            'projects' => [
+                'template' => 'erpnext_projects_onboarding',
+                'tags' => ['module:projects', 'workflow:project_delivery'],
+            ],
+            'hr_payroll' => [
+                'template' => 'erpnext_hr_payroll_onboarding',
+                'tags' => ['module:hr_payroll', 'workflow:people_operations'],
+            ],
+            'support_helpdesk' => [
+                'template' => 'erpnext_support_onboarding',
+                'tags' => ['module:support', 'workflow:service_management'],
+            ],
+            'website_portal' => [
+                'template' => 'erpnext_portal_onboarding',
+                'tags' => ['module:portal', 'workflow:customer_self_service'],
+            ],
+            'reports_analytics' => [
+                'template' => 'erpnext_reporting_onboarding',
+                'tags' => ['module:reporting', 'workflow:management_reporting'],
+            ],
+            'integrations' => [
+                'template' => 'erpnext_integrations_onboarding',
+                'tags' => ['module:integrations', 'workflow:system_integration'],
+            ],
+            'full_erp_evaluation' => [
+                'template' => 'erpnext_full_erp_evaluation_onboarding',
+                'tags' => ['module:full_erp', 'qualification:multi_module_review'],
+            ],
+            'not_sure' => [
+                'template' => 'erpnext_discovery_onboarding',
+                'tags' => ['module:not_sure', 'qualification:discovery_required'],
+            ],
+        ];
+
+        $templates = [];
+        $tags = [];
+        foreach ($module_interest as $module) {
+            if (empty($definitions[$module])) {
+                continue;
+            }
+
+            $templates[] = $definitions[$module]['template'];
+            $tags = array_merge($tags, $definitions[$module]['tags']);
+        }
+
+        if (in_array('accounting', $module_interest, true) && in_array('stock', $module_interest, true)) {
+            $tags[] = 'qualification:finance_inventory_review';
+        }
+
+        return [
+            'onboarding_templates' => array_values(array_unique($templates)),
+            'qualification_tags' => array_values(array_unique($tags)),
+        ];
+    }
+
+    private static function onboarding_admin_review_fields(?array $access_request, string $role, string $company_size, string $industry, string $primary_workflow, array $module_interest, array $module_mapping): array
+    {
+        return [
+            'persona' => self::first_non_empty([
+                $access_request['persona'] ?? null,
+                self::derive_persona($role, $primary_workflow, $module_interest),
+            ]),
+            'company_size' => $company_size,
+            'industry' => $industry,
+            'country_region' => self::first_non_empty([
+                $access_request['country_region'] ?? null,
+            ]),
+            'erp_module_interest' => $module_interest,
+            'onboarding_templates' => $module_mapping['onboarding_templates'],
+            'qualification_tags' => $module_mapping['qualification_tags'],
+        ];
+    }
+
+    private static function derive_persona(string $role, string $primary_workflow, array $module_interest): string
+    {
+        $text = strtolower($role . ' ' . $primary_workflow . ' ' . implode(' ', $module_interest));
+
+        if (preg_match('/\b(owner|founder|ceo|co-founder|director|managing partner|executive)\b/', $text)) {
+            return 'owner_executive';
+        }
+
+        if (preg_match('/\b(finance|accounting|accountant|cfo|controller|invoice|billing|accounts)\b/', $text)) {
+            return 'finance_lead';
+        }
+
+        if (preg_match('/\b(operations|inventory|stock|warehouse|manufacturing|production|procurement|supply chain|project)\b/', $text)) {
+            return 'operations_lead';
+        }
+
+        if (preg_match('/\b(it|technology|systems|admin|administrator|integration|portal|website)\b/', $text)) {
+            return 'it_admin_buyer';
+        }
+
+        return 'other_business_user';
     }
 
     private static function onboarding_status(string $review_status, bool $required_fields_complete): string

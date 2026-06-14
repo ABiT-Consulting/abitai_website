@@ -440,6 +440,45 @@ Mock response for review-pending user, `200`:
     "industry": "trading_distribution",
     "primary_workflow_provided": true,
     "erp_module_interest": ["buying", "stock", "accounting"],
+    "onboarding_templates": [
+      "erpnext_procurement_onboarding",
+      "erpnext_inventory_onboarding",
+      "erpnext_finance_onboarding"
+    ],
+    "qualification_tags": [
+      "module:procurement",
+      "workflow:purchase_to_pay",
+      "module:inventory",
+      "workflow:stock_control",
+      "qualification:inventory_review",
+      "module:finance",
+      "workflow:financial_controls",
+      "qualification:finance_review",
+      "qualification:finance_inventory_review"
+    ],
+    "admin_review_fields": {
+      "persona": "operations_lead",
+      "company_size": "11_50",
+      "industry": "trading_distribution",
+      "country_region": "AE",
+      "erp_module_interest": ["buying", "stock", "accounting"],
+      "onboarding_templates": [
+        "erpnext_procurement_onboarding",
+        "erpnext_inventory_onboarding",
+        "erpnext_finance_onboarding"
+      ],
+      "qualification_tags": [
+        "module:procurement",
+        "workflow:purchase_to_pay",
+        "module:inventory",
+        "workflow:stock_control",
+        "qualification:inventory_review",
+        "module:finance",
+        "workflow:financial_controls",
+        "qualification:finance_review",
+        "qualification:finance_inventory_review"
+      ]
+    },
     "current_system": "Spreadsheets",
     "timeline": "1_3_months"
   },
@@ -648,6 +687,7 @@ Build mocks around these scenarios before live API integration:
 - Keep duplicate registration and invalid login copy generic enough to avoid account enumeration.
 - Email verification and password reset token validation endpoints are not currently exposed in this plugin contract; frontend mocks for those screens should use the UX states documented in `docs/auth-onboarding-ux-copy.md` until the corresponding backend endpoints are published.
 - Registration consent is captured at signup by the current plugin implementation. The backend resolves legal version fields server-side and stores consent audit evidence with hashed IP and user-agent values.
+- `/api/auth/me` maps selected ERP module interests to `onboarding.onboarding_templates`, `onboarding.qualification_tags`, and `onboarding.admin_review_fields`. The backend normalizes finance/inventory aliases to the configured `accounting`/`stock` module keys; selecting finance and inventory yields `erpnext_finance_onboarding`, `erpnext_inventory_onboarding`, `module:finance`, `module:inventory`, and `qualification:finance_inventory_review`.
 - The current backend does not expose an onboarding update endpoint in this contract. Existing onboarding fields are read from the access request or legacy user meta by `/api/auth/me`; a future endpoint should update `role`, `company_size`, `industry`, `primary_workflow`, `erp_module_interest`, `current_system`, `timeline`, and `notes`.
 
 ## Mock Data Defaults
