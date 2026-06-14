@@ -197,21 +197,25 @@ function abitai_auth_render_dashboard_gate_slot() {
 	$request = function_exists( 'abitai_auth_get_dashboard_request' ) ? abitai_auth_get_dashboard_request() : array(
 		'status'       => 'onboarding_required',
 		'status_label' => __( 'Company profile incomplete', 'astra' ),
+		'onboarding_state' => 'profile_incomplete',
+		'state_label'  => __( 'Profile incomplete', 'astra' ),
 		'email'        => '',
 		'company_name' => '',
 	);
 	$gate    = function_exists( 'abitai_auth_get_dashboard_gate' ) ? abitai_auth_get_dashboard_gate( $request ) : array(
-		'profile_state'        => __( 'Incomplete', 'astra' ),
-		'profile_variant'      => 'pending',
-		'profile_description'  => __( 'Complete the required company profile fields before admin review can begin.', 'astra' ),
-		'provisioning_state'   => __( 'Blocked', 'astra' ),
-		'provisioning_variant' => 'rejected',
-		'next_action'          => __( 'Complete company profile', 'astra' ),
-		'next_href'            => home_url( '/auth/onboarding' ),
-		'next_variant'         => 'primary',
-		'alert_variant'        => 'info',
-		'alert_summary'        => __( 'Company profile completion required.', 'astra' ),
-		'alert_body'           => __( 'Your email is verified. Complete your company profile so the abit.ai team can review the access request.', 'astra' ),
+		'onboarding_state'         => 'profile_incomplete',
+		'profile_state'            => __( 'Incomplete', 'astra' ),
+		'profile_variant'          => 'pending',
+		'profile_description'      => __( 'Complete the required company profile fields before admin review can begin.', 'astra' ),
+		'provisioning_state'       => __( 'Blocked', 'astra' ),
+		'provisioning_variant'     => 'rejected',
+		'provisioning_description' => __( 'Workspace access is blocked until profile completion, review, and approval are complete.', 'astra' ),
+		'next_action'              => __( 'Complete company profile', 'astra' ),
+		'next_href'                => home_url( '/auth/onboarding' ),
+		'next_variant'             => 'primary',
+		'alert_variant'            => 'info',
+		'alert_summary'            => __( 'Company profile completion required.', 'astra' ),
+		'alert_body'               => __( 'Your email is verified. Complete your company profile so the review team can continue.', 'astra' ),
 	);
 	$email        = isset( $request['email'] ) && '' !== $request['email'] ? $request['email'] : __( 'Signed-in account', 'astra' );
 	$company_name = isset( $request['company_name'] ) && '' !== $request['company_name'] ? $request['company_name'] : __( 'Not provided yet', 'astra' );
@@ -234,6 +238,14 @@ function abitai_auth_render_dashboard_gate_slot() {
 			<span><?php esc_html_e( 'Request status', 'astra' ); ?></span>
 			<strong><?php echo esc_html( $request['status_label'] ); ?></strong>
 		</div>
+		<div class="abit-auth-status-box">
+			<span><?php esc_html_e( 'Onboarding state', 'astra' ); ?></span>
+			<strong><?php echo esc_html( isset( $request['state_label'] ) ? $request['state_label'] : $gate['profile_state'] ); ?></strong>
+		</div>
+		<div class="abit-auth-status-box">
+			<span><?php esc_html_e( 'Allowed next action', 'astra' ); ?></span>
+			<strong><?php echo esc_html( $gate['next_action'] ); ?></strong>
+		</div>
 	</div>
 
 	<div class="abit-auth-dashboard-gate">
@@ -250,7 +262,7 @@ function abitai_auth_render_dashboard_gate_slot() {
 				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( $gate['provisioning_variant'] ); ?>"><?php echo esc_html( $gate['provisioning_state'] ); ?></span>
 				<h3><?php esc_html_e( 'Provisioning status', 'astra' ); ?></h3>
 			</div>
-			<p><?php esc_html_e( 'Workspace provisioning follows verification, profile completion, and admin approval.', 'astra' ); ?></p>
+			<p><?php echo esc_html( $gate['provisioning_description'] ); ?></p>
 		</section>
 	</div>
 

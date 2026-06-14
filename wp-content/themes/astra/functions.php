@@ -1086,6 +1086,10 @@ if ( ! function_exists( 'abitai_get_mock_auth_users' ) ) {
 					'password' => 'Password123!',
 					'status'   => 'approved_for_mvp_access',
 				),
+				'access-approved@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'approved',
+				),
 				'unverified@abit.ai' => array(
 					'password' => 'Password123!',
 					'status'   => 'pending_email_verification',
@@ -1109,6 +1113,30 @@ if ( ! function_exists( 'abitai_get_mock_auth_users' ) ) {
 				'rejected@abit.ai'   => array(
 					'password' => 'Password123!',
 					'status'   => 'rejected',
+				),
+				'profile-incomplete@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'profile_incomplete',
+				),
+				'ready-for-review@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'ready_for_review',
+				),
+				'provisioning@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'provisioning',
+				),
+				'provisioned@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'provisioned',
+				),
+				'blocked@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'blocked',
+				),
+				'live@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'live',
 				),
 			)
 		);
@@ -1137,6 +1165,13 @@ if ( ! function_exists( 'abitai_get_mock_auth_redirect_url' ) ) {
 			case 'more_information_requested':
 			case 'rejected':
 			case 'approved_for_mvp_access':
+			case 'profile_incomplete':
+			case 'ready_for_review':
+			case 'approved':
+			case 'provisioning':
+			case 'provisioned':
+			case 'blocked':
+			case 'live':
 			default:
 				return add_query_arg( $args, home_url( '/dashboard' ) );
 		}
@@ -1157,7 +1192,62 @@ if ( ! function_exists( 'abitai_get_access_request_statuses' ) ) {
 			'more_information_requested' => __( 'More information requested', 'astra' ),
 			'approved_for_mvp_access'    => __( 'Approved for MVP access', 'astra' ),
 			'rejected'                   => __( 'Request rejected', 'astra' ),
+			'profile_incomplete'         => __( 'Profile incomplete', 'astra' ),
+			'ready_for_review'           => __( 'Ready for review', 'astra' ),
+			'approved'                   => __( 'Approved', 'astra' ),
+			'provisioning'               => __( 'Provisioning', 'astra' ),
+			'provisioned'                => __( 'Provisioned', 'astra' ),
+			'blocked'                    => __( 'Blocked', 'astra' ),
+			'live'                       => __( 'Live', 'astra' ),
 		);
+	}
+}
+
+if ( ! function_exists( 'abitai_onboarding_state_aliases' ) ) {
+	/**
+	 * Map legacy review statuses and fixture aliases to canonical onboarding states.
+	 *
+	 * @return array<string,string>
+	 */
+	function abitai_onboarding_state_aliases() {
+		return array(
+			'onboarding_required'        => 'profile_incomplete',
+			'pending_admin_review'       => 'ready_for_review',
+			'more_information_requested' => 'profile_incomplete',
+			'approved_for_mvp_access'    => 'live',
+			'rejected'                   => 'blocked',
+			'profile-incomplete'         => 'profile_incomplete',
+			'ready-for-review'           => 'ready_for_review',
+		);
+	}
+}
+
+if ( ! function_exists( 'abitai_normalize_onboarding_state' ) ) {
+	/**
+	 * Resolve a stored status to the canonical verified-user onboarding state.
+	 *
+	 * @param string $status Stored status or fixture key.
+	 * @return string
+	 */
+	function abitai_normalize_onboarding_state( $status ) {
+		$status = sanitize_key( (string) $status );
+		$states = array(
+			'profile_incomplete',
+			'ready_for_review',
+			'approved',
+			'provisioning',
+			'provisioned',
+			'blocked',
+			'live',
+		);
+
+		if ( in_array( $status, $states, true ) ) {
+			return $status;
+		}
+
+		$aliases = abitai_onboarding_state_aliases();
+
+		return isset( $aliases[ $status ] ) ? $aliases[ $status ] : 'profile_incomplete';
 	}
 }
 
@@ -1172,8 +1262,17 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 		$status   = isset( $_GET['status'] ) ? sanitize_key( wp_unslash( $_GET['status'] ) ) : '';
 		$email    = isset( $_GET['email'] ) ? sanitize_email( wp_unslash( $_GET['email'] ) ) : '';
 
+		if ( '' === $status && isset( $_GET['onboarding_state'] ) ) {
+			$status = sanitize_key( wp_unslash( $_GET['onboarding_state'] ) );
+		}
+
+		if ( '' === $status && isset( $_GET['state'] ) ) {
+			$status = sanitize_key( wp_unslash( $_GET['state'] ) );
+		}
+
 		if ( ! isset( $statuses[ $status ] ) ) {
-			$status = '';
+			$aliases = function_exists( 'abitai_onboarding_state_aliases' ) ? abitai_onboarding_state_aliases() : array();
+			$status  = isset( $aliases[ $status ], $statuses[ $aliases[ $status ] ] ) ? $aliases[ $status ] : '';
 		}
 
 		if ( is_user_logged_in() ) {
@@ -1204,11 +1303,15 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 			$company_name = sanitize_text_field( (string) get_user_meta( get_current_user_id(), 'abitai_company_name', true ) );
 		}
 
+		$onboarding_state = ( 'pending_email_verification' === $status ) ? 'blocked' : abitai_normalize_onboarding_state( $status );
+
 		return array(
-			'status'       => $status,
-			'status_label' => $statuses[ $status ],
-			'email'        => $email,
-			'company_name' => $company_name,
+			'status'           => $status,
+			'status_label'     => $statuses[ $status ],
+			'onboarding_state' => $onboarding_state,
+			'state_label'      => $statuses[ $onboarding_state ],
+			'email'            => $email,
+			'company_name'     => $company_name,
 		);
 	}
 }
@@ -1222,28 +1325,47 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_gate' ) ) {
 	 */
 	function abitai_auth_get_dashboard_gate( $request ) {
 		$status = isset( $request['status'] ) ? (string) $request['status'] : 'pending_email_verification';
+		$state  = isset( $request['onboarding_state'] ) ? (string) $request['onboarding_state'] : abitai_normalize_onboarding_state( $status );
 
 		$gate = array(
-			'profile_state'       => __( 'Incomplete', 'astra' ),
-			'profile_variant'     => 'pending',
-			'profile_description' => __( 'Complete the required company profile fields before admin review can begin.', 'astra' ),
-			'provisioning_state'  => __( 'Blocked', 'astra' ),
-			'provisioning_variant'=> 'rejected',
-			'next_action'         => __( 'Complete company profile', 'astra' ),
-			'next_href'           => home_url( '/auth/onboarding' ),
-			'next_variant'        => 'primary',
-			'alert_variant'       => 'info',
-			'alert_summary'       => __( 'Company profile completion required.', 'astra' ),
-			'alert_body'          => __( 'Your email is verified. Complete your company profile so the abit.ai team can review the access request.', 'astra' ),
+			'onboarding_state'          => $state,
+			'profile_state'             => __( 'Incomplete', 'astra' ),
+			'profile_variant'           => 'pending',
+			'profile_description'       => __( 'Complete the required company profile fields before admin review can begin.', 'astra' ),
+			'provisioning_state'        => __( 'Blocked', 'astra' ),
+			'provisioning_variant'      => 'rejected',
+			'provisioning_description'  => __( 'Workspace access is blocked until profile completion, review, and approval are complete.', 'astra' ),
+			'next_action'               => __( 'Complete company profile', 'astra' ),
+			'next_href'                 => home_url( '/auth/onboarding' ),
+			'next_variant'              => 'primary',
+			'alert_variant'             => 'info',
+			'alert_summary'             => __( 'Company profile completion required.', 'astra' ),
+			'alert_body'                => __( 'Your email is verified. Complete your company profile so the review team can continue.', 'astra' ),
 		);
 
-		switch ( $status ) {
-			case 'pending_admin_review':
+		switch ( $state ) {
+			case 'profile_incomplete':
+				if ( 'more_information_requested' === $status ) {
+					$gate['profile_state']       = __( 'Needs update', 'astra' );
+					$gate['profile_variant']     = 'review';
+					$gate['profile_description'] = __( 'The review team needs updated company context before proceeding.', 'astra' );
+					$gate['provisioning_state']  = __( 'Paused', 'astra' );
+					$gate['provisioning_variant']= 'review';
+					$gate['provisioning_description'] = __( 'Workspace access remains paused until the requested details are updated.', 'astra' );
+					$gate['next_action']         = __( 'Update company profile', 'astra' );
+					$gate['next_href']           = home_url( '/auth/more-information' );
+					$gate['alert_variant']       = 'warning';
+					$gate['alert_summary']       = __( 'More information is needed.', 'astra' );
+					$gate['alert_body']          = __( 'Update the requested details before the review can continue.', 'astra' );
+				}
+				break;
+			case 'ready_for_review':
 				$gate['profile_state']       = __( 'Complete', 'astra' );
 				$gate['profile_variant']     = 'approved';
 				$gate['profile_description'] = __( 'Required company profile details have been submitted for review.', 'astra' );
 				$gate['provisioning_state']  = __( 'Waiting for approval', 'astra' );
 				$gate['provisioning_variant']= 'review';
+				$gate['provisioning_description'] = __( 'Workspace access remains blocked while the review team checks the request.', 'astra' );
 				$gate['next_action']         = __( 'Review in progress', 'astra' );
 				$gate['next_href']           = home_url( '/auth/review-pending' );
 				$gate['next_variant']        = 'secondary';
@@ -1251,41 +1373,72 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_gate' ) ) {
 				$gate['alert_summary']       = __( 'Request submitted for review.', 'astra' );
 				$gate['alert_body']          = __( 'Product access remains blocked until admin approval.', 'astra' );
 				break;
-			case 'more_information_requested':
-				$gate['profile_state']       = __( 'Needs update', 'astra' );
-				$gate['profile_variant']     = 'review';
-				$gate['profile_description'] = __( 'The review team needs updated company context before proceeding.', 'astra' );
-				$gate['provisioning_state']  = __( 'Paused', 'astra' );
-				$gate['provisioning_variant']= 'review';
-				$gate['next_action']         = __( 'Update company profile', 'astra' );
-				$gate['next_href']           = home_url( '/auth/more-information' );
-				$gate['alert_variant']       = 'warning';
-				$gate['alert_summary']       = __( 'More information is needed.', 'astra' );
-				$gate['alert_body']          = __( 'Update the requested details before the review can continue.', 'astra' );
-				break;
-			case 'approved_for_mvp_access':
-				$gate['profile_state']       = __( 'Complete', 'astra' );
+			case 'approved':
+				$gate['profile_state']       = __( 'Approved', 'astra' );
 				$gate['profile_variant']     = 'approved';
-				$gate['profile_description'] = __( 'Required company profile details are complete.', 'astra' );
+				$gate['profile_description'] = __( 'The access request is approved and ready for workspace preparation.', 'astra' );
+				$gate['provisioning_state']  = __( 'Ready to request', 'astra' );
+				$gate['provisioning_variant']= 'review';
+				$gate['provisioning_description'] = __( 'Request workspace setup when you are ready for the abit.ai team to prepare access.', 'astra' );
+				$gate['next_action']         = __( 'Request provisioning', 'astra' );
+				$gate['next_href']           = home_url( '/api/provisioning/request' );
+				$gate['alert_variant']       = 'success';
+				$gate['alert_summary']       = __( 'Access approved.', 'astra' );
+				$gate['alert_body']          = __( 'Your request is approved. Workspace preparation can now be requested.', 'astra' );
+				break;
+			case 'provisioning':
+				$gate['profile_state']       = __( 'Approved', 'astra' );
+				$gate['profile_variant']     = 'approved';
+				$gate['profile_description'] = __( 'The access request is approved and workspace setup is underway.', 'astra' );
+				$gate['provisioning_state']  = __( 'Provisioning', 'astra' );
+				$gate['provisioning_variant']= 'review';
+				$gate['provisioning_description'] = __( 'The workspace is being prepared. No user action is needed right now.', 'astra' );
+				$gate['next_action']         = __( 'Provisioning in progress', 'astra' );
+				$gate['next_href']           = home_url( '/dashboard' );
+				$gate['next_variant']        = 'secondary';
+				$gate['alert_variant']       = 'warning';
+				$gate['alert_summary']       = __( 'Workspace preparation is in progress.', 'astra' );
+				$gate['alert_body']          = __( 'The workspace is being prepared. We will update this dashboard when access is ready.', 'astra' );
+				break;
+			case 'provisioned':
+				$gate['profile_state']       = __( 'Approved', 'astra' );
+				$gate['profile_variant']     = 'approved';
+				$gate['profile_description'] = __( 'The access request is approved and the workspace has been prepared.', 'astra' );
 				$gate['provisioning_state']  = __( 'Provisioned', 'astra' );
 				$gate['provisioning_variant']= 'approved';
+				$gate['provisioning_description'] = __( 'Workspace setup is complete and awaiting final activation.', 'astra' );
+				$gate['next_action']         = __( 'View workspace status', 'astra' );
+				$gate['next_href']           = home_url( '/dashboard' );
+				$gate['next_variant']        = 'secondary';
+				$gate['alert_variant']       = 'success';
+				$gate['alert_summary']       = __( 'Workspace provisioned.', 'astra' );
+				$gate['alert_body']          = __( 'Workspace setup is complete. Final activation is the remaining step before access opens.', 'astra' );
+				break;
+			case 'blocked':
+				$gate['profile_state']       = __( 'Blocked', 'astra' );
+				$gate['profile_variant']     = 'rejected';
+				$gate['profile_description'] = __( 'This account cannot continue right now. Contact support for help.', 'astra' );
+				$gate['provisioning_state']  = __( 'Unavailable', 'astra' );
+				$gate['provisioning_variant']= 'rejected';
+				$gate['provisioning_description'] = __( 'Workspace access is unavailable while the account is blocked.', 'astra' );
+				$gate['next_action']         = __( 'Contact support', 'astra' );
+				$gate['next_href']           = 'mailto:support@abit.ai';
+				$gate['alert_variant']       = 'error';
+				$gate['alert_summary']       = __( 'Access unavailable.', 'astra' );
+				$gate['alert_body']          = __( 'This account cannot continue right now. Contact support for help.', 'astra' );
+				break;
+			case 'live':
+				$gate['profile_state']       = __( 'Approved', 'astra' );
+				$gate['profile_variant']     = 'approved';
+				$gate['profile_description'] = __( 'The access request is approved and workspace access is active.', 'astra' );
+				$gate['provisioning_state']  = __( 'Live', 'astra' );
+				$gate['provisioning_variant']= 'approved';
+				$gate['provisioning_description'] = __( 'Workspace access is active for this account.', 'astra' );
 				$gate['next_action']         = __( 'Open workspace', 'astra' );
 				$gate['next_href']           = home_url( '/' );
 				$gate['alert_variant']       = 'success';
 				$gate['alert_summary']       = __( 'Workspace access ready.', 'astra' );
-				$gate['alert_body']          = __( 'Your access request is approved for MVP workspace access.', 'astra' );
-				break;
-			case 'rejected':
-				$gate['profile_state']       = __( 'Closed', 'astra' );
-				$gate['profile_variant']     = 'rejected';
-				$gate['profile_description'] = __( 'This request is not approved for MVP access.', 'astra' );
-				$gate['provisioning_state']  = __( 'Unavailable', 'astra' );
-				$gate['provisioning_variant']= 'rejected';
-				$gate['next_action']         = __( 'Contact support', 'astra' );
-				$gate['next_href']           = 'mailto:support@abit.ai';
-				$gate['alert_variant']       = 'error';
-				$gate['alert_summary']       = __( 'Product access is unavailable.', 'astra' );
-				$gate['alert_body']          = __( 'This access request is not approved for MVP access.', 'astra' );
+				$gate['alert_body']          = __( 'Your workspace access is ready.', 'astra' );
 				break;
 		}
 
