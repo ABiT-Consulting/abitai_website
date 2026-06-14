@@ -452,6 +452,14 @@ if ( ! function_exists( 'abitai_operator_enqueue_styles' ) ) {
 			array( 'astra-theme-css' ),
 			filemtime( ASTRA_THEME_DIR . 'assets/css/abitai-frontend.css' )
 		);
+
+		wp_enqueue_script(
+			'abitai-auth',
+			ASTRA_THEME_URI . 'assets/js/abitai-auth.js',
+			array(),
+			filemtime( ASTRA_THEME_DIR . 'assets/js/abitai-auth.js' ),
+			true
+		);
 	}
 	add_action( 'wp_enqueue_scripts', 'abitai_operator_enqueue_styles' );
 }
@@ -822,6 +830,123 @@ if ( ! function_exists( 'abitai_handle_user_signup' ) ) {
 	}
 	add_action( 'admin_post_nopriv_abitai_user_signup', 'abitai_handle_user_signup' );
 	add_action( 'admin_post_abitai_user_signup', 'abitai_handle_user_signup' );
+}
+
+/**
+ * Return deterministic mock users for the front-end auth MVP.
+ *
+ * @return array<string,array<string,string>>
+ */
+if ( ! function_exists( 'abitai_get_mock_auth_users' ) ) {
+	function abitai_get_mock_auth_users() {
+		return apply_filters(
+			'abitai_mock_auth_users',
+			array(
+				'valid@abit.ai'      => array(
+					'password' => 'Password123!',
+					'status'   => 'approved_for_mvp_access',
+				),
+				'approved@abit.ai'   => array(
+					'password' => 'Password123!',
+					'status'   => 'approved_for_mvp_access',
+				),
+				'unverified@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'pending_email_verification',
+				),
+				'onboarding@abit.ai' => array(
+					'password' => 'Password123!',
+					'status'   => 'onboarding_required',
+				),
+				'review@abit.ai'     => array(
+					'password' => 'Password123!',
+					'status'   => 'pending_admin_review',
+				),
+				'info@abit.ai'       => array(
+					'password' => 'Password123!',
+					'status'   => 'more_information_requested',
+				),
+				'rejected@abit.ai'   => array(
+					'password' => 'Password123!',
+					'status'   => 'rejected',
+				),
+			)
+		);
+	}
+}
+
+/**
+ * Map an access request status to the mocked next front-end route.
+ *
+ * @param string $status Access request status.
+ * @param string $email User email address.
+ * @return string
+ */
+if ( ! function_exists( 'abitai_get_mock_auth_redirect_url' ) ) {
+	function abitai_get_mock_auth_redirect_url( $status, $email ) {
+		$args = array(
+			'status' => $status,
+			'email'  => $email,
+		);
+
+		switch ( $status ) {
+			case 'pending_email_verification':
+				return add_query_arg( array( 'state' => 'required', 'email' => $email ), home_url( '/auth/verify' ) );
+			case 'onboarding_required':
+				return add_query_arg( $args, home_url( '/auth/onboarding' ) );
+			case 'pending_admin_review':
+				return add_query_arg( $args, home_url( '/auth/review-pending' ) );
+			case 'more_information_requested':
+				return add_query_arg( $args, home_url( '/auth/more-information' ) );
+			case 'rejected':
+				return add_query_arg( $args, home_url( '/auth/rejected' ) );
+			case 'approved_for_mvp_access':
+			default:
+				return add_query_arg( $args, home_url( '/auth/app' ) );
+		}
+	}
+}
+
+/**
+ * Handle front-end mocked sign-in form submission.
+ */
+if ( ! function_exists( 'abitai_handle_mock_sign_in' ) ) {
+	function abitai_handle_mock_sign_in() {
+		if ( 'POST' !== strtoupper( $_SERVER['REQUEST_METHOD'] ?? '' ) ) {
+			wp_safe_redirect( home_url( '/auth/sign-in' ) );
+			exit;
+		}
+
+		$redirect_url = home_url( '/auth/sign-in' );
+		$email        = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
+		$password     = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : '';
+
+		if ( ! isset( $_POST['abitai_signin_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['abitai_signin_nonce'] ) ), 'abitai_mock_sign_in' ) ) {
+			wp_safe_redirect( add_query_arg( 'signin_error', 'invalid', $redirect_url ) );
+			exit;
+		}
+
+		$users = abitai_get_mock_auth_users();
+		$key   = strtolower( $email );
+
+		if ( '' === $email || '' === $password || ! isset( $users[ $key ] ) || ! hash_equals( $users[ $key ]['password'], $password ) ) {
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'signin_error' => 'invalid',
+						'email'        => $email,
+					),
+					$redirect_url
+				)
+			);
+			exit;
+		}
+
+		wp_safe_redirect( abitai_get_mock_auth_redirect_url( $users[ $key ]['status'], $email ) );
+		exit;
+	}
+	add_action( 'admin_post_nopriv_abitai_mock_sign_in', 'abitai_handle_mock_sign_in' );
+	add_action( 'admin_post_abitai_mock_sign_in', 'abitai_handle_mock_sign_in' );
 }
 
 /**

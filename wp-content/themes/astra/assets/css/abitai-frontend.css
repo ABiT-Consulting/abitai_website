@@ -1200,6 +1200,13 @@ body.aierp-front-page * {
 	text-underline-offset: 3px;
 }
 
+.abit-auth-route-footer a[aria-disabled="true"],
+.abit-auth-inline-row a[aria-disabled="true"] {
+	pointer-events: none;
+	opacity: 0.58;
+	text-decoration: none;
+}
+
 .abit-auth-status-box {
 	display: grid;
 	gap: 4px;
@@ -1351,6 +1358,7 @@ body.aierp-front-page * {
 }
 
 .abit-auth-input:disabled,
+.abit-auth-input[readonly],
 .abit-auth-select:disabled,
 .abit-auth-page textarea:disabled,
 .abit-auth-button:disabled,
