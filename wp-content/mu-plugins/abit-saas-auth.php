@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.8';
+    private const SCHEMA_VERSION = '2026-06-14.9';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -19,7 +19,11 @@ final class ABiT_SaaS_Auth_API
     private const REVIEW_STATUS_APPROVED = 'approved_for_mvp_access';
     private const REVIEW_STATUS_REJECTED = 'rejected';
     private const REVIEW_STATUS_MORE_INFORMATION_REQUESTED = 'more_information_requested';
+    private const REVIEW_STATUS_ON_HOLD = 'on_hold';
     private const PROVISIONING_STATUS_REQUESTED = 'requested';
+    private const PROVISIONING_READINESS_READY = 'ready';
+    private const PROVISIONING_READINESS_NOT_READY = 'not_ready';
+    private const PROVISIONING_READINESS_BLOCKED = 'blocked';
     private const WORKSPACE_STATUS_ACTIVE = 'active';
     private const WORKSPACE_MEMBER_STATUS_ACTIVE = 'active';
     private const WORKSPACE_MEMBER_ROLE_OWNER = 'owner';
@@ -39,6 +43,7 @@ final class ABiT_SaaS_Auth_API
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
         add_action('template_redirect', [__CLASS__, 'handle_pretty_api_route'], 0);
         add_action('admin_menu', [__CLASS__, 'register_email_observability_page']);
+        add_action('admin_post_abit_saas_auth_admin_decision', [__CLASS__, 'handle_admin_decision_post']);
         add_action('abit_saas_auth_email_bounced', [__CLASS__, 'record_email_bounce'], 10, 1);
     }
 
@@ -297,7 +302,7 @@ final class ABiT_SaaS_Auth_API
             $where[] = 'ar.email_verified_at IS NULL';
         }
 
-        $sql = 'SELECT ar.id, ar.user_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.persona, ar.review_status, ar.email_verified_at, ar.created_at, ar.updated_at, u.display_name AS owner_name, u.user_email AS owner_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ar.updated_at DESC, ar.created_at DESC LIMIT 200';
+        $sql = 'SELECT ar.id, ar.user_id, ar.admin_owner_user_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.persona, ar.review_status, ar.email_verified_at, ar.created_at, ar.updated_at, u.display_name AS owner_name, u.user_email AS owner_email, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ar.updated_at DESC, ar.created_at DESC LIMIT 200';
 
         if (!empty($params)) {
             $sql = $wpdb->prepare($sql, $params);
@@ -357,7 +362,9 @@ final class ABiT_SaaS_Auth_API
         } else {
             foreach ($rows as $row) {
                 $modules = self::normalize_erp_module_interests(self::decode_list_value($row['erp_module_interest'] ?? null));
-                $owner = self::first_non_empty([$row['owner_name'] ?? null, $row['owner_email'] ?? null, 'User #' . (int) ($row['user_id'] ?? 0)]);
+                $owner = (int) ($row['admin_owner_user_id'] ?? 0) > 0
+                    ? self::first_non_empty([$row['admin_owner_name'] ?? null, $row['admin_owner_email'] ?? null, 'Admin #' . (int) $row['admin_owner_user_id']])
+                    : self::first_non_empty([$row['owner_name'] ?? null, $row['owner_email'] ?? null, 'User #' . (int) ($row['user_id'] ?? 0)]);
 
                 echo '<tr>';
                 $detail_url = add_query_arg(
@@ -393,6 +400,7 @@ final class ABiT_SaaS_Auth_API
 
         echo '<div class="wrap"><h1>ABiT Customer Profile</h1>';
         echo '<p><a class="button" href="' . esc_url($back_url) . '">Back to signup review</a></p>';
+        self::render_signup_review_admin_notice();
 
         if (!is_array($access_request)) {
             echo '<div class="notice notice-error"><p>Access request not found.</p></div></div>';
@@ -429,6 +437,11 @@ final class ABiT_SaaS_Auth_API
             [
                 'Request ID' => '#' . (int) $access_request['id'],
                 'Review status' => self::signup_review_label((string) $access_request['review_status']),
+                'Admin owner' => self::signup_review_admin_owner_summary($access_request),
+                'Last decision' => self::signup_review_label((string) ($access_request['admin_decision'] ?? '')),
+                'Decision reason' => (string) ($access_request['admin_decision_reason'] ?? ''),
+                'Reviewed by' => self::signup_review_reviewer_summary($access_request),
+                'Reviewed at' => self::nullable_datetime($access_request['admin_reviewed_at'] ?? null),
                 'Signup created' => self::nullable_datetime($access_request['created_at'] ?? null),
                 'Last updated' => self::nullable_datetime($access_request['updated_at'] ?? null),
                 'Full name' => (string) $access_request['full_name'],
@@ -466,12 +479,15 @@ final class ABiT_SaaS_Auth_API
                 'Eligible' => is_array($provisioning) && !empty($provisioning['eligible']) ? 'Yes' : 'No',
                 'Missing requirements' => is_array($provisioning) ? implode(', ', array_map([__CLASS__, 'signup_review_label'], $provisioning['missing_requirements'])) : 'Request owner missing',
                 'Provisioning request' => is_array($provisioning_request) ? '#' . (int) $provisioning_request['id'] . ' - ' . self::signup_review_label((string) $provisioning_request['request_status']) : 'Not requested',
+                'Readiness override' => self::signup_review_label((string) ($access_request['provisioning_readiness_status'] ?? '')),
+                'Readiness reason' => (string) ($access_request['provisioning_readiness_reason'] ?? ''),
                 'Workspace' => is_array($workspace) ? self::signup_review_workspace_summary($workspace) : 'Unavailable',
                 'Workspace slug override' => self::first_non_empty([$access_request['workspace_slug_override'] ?? null]) ?: 'None',
             ]
         );
         echo '</div>';
 
+        self::render_signup_review_decision_panel($access_request);
         self::render_signup_review_workflow_panel($access_request);
         self::render_signup_review_readiness_panel($provisioning);
         self::render_signup_review_notes_panel($access_request, $provisioning_request);
@@ -485,7 +501,7 @@ final class ABiT_SaaS_Auth_API
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status, u.user_login, u.user_email AS owner_email, u.display_name AS owner_name, u.user_registered, u.user_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id WHERE ar.id = %d LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status, u.user_login, u.user_email AS owner_email, u.display_name AS owner_name, u.user_registered, u.user_status, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email, ru.display_name AS reviewer_name, ru.user_email AS reviewer_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id LEFT JOIN ' . $wpdb->users . ' ru ON ru.ID = ar.admin_reviewed_by WHERE ar.id = %d LIMIT 1',
                 $access_request_id
             ),
             ARRAY_A
@@ -522,6 +538,121 @@ final class ABiT_SaaS_Auth_API
         );
 
         return is_array($rows) ? $rows : [];
+    }
+
+    private static function render_signup_review_admin_notice(): void
+    {
+        $request = wp_unslash($_GET);
+        if (!empty($request['decision_updated'])) {
+            echo '<div class="notice notice-success is-dismissible"><p>Admin qualification decision saved and audit event recorded.</p></div>';
+        } elseif (!empty($request['decision_error'])) {
+            echo '<div class="notice notice-error is-dismissible"><p>' . esc_html(self::signup_review_decision_error_message((string) $request['decision_error'])) . '</p></div>';
+        }
+    }
+
+    private static function signup_review_decision_error_message(string $code): string
+    {
+        $messages = [
+            'permission_denied' => 'Admin review access is required.',
+            'invalid_nonce' => 'Decision security check failed. Refresh the page and try again.',
+            'not_found' => 'Access request not found.',
+            'invalid_decision' => 'Select a valid qualification decision.',
+            'invalid_reason' => 'Enter a decision reason between 10 and 1000 characters.',
+            'invalid_owner' => 'Select a valid admin owner.',
+            'invalid_readiness' => 'Select a valid provisioning readiness value.',
+            'update_failed' => 'Decision could not be saved.',
+        ];
+
+        return $messages[$code] ?? 'Decision could not be saved.';
+    }
+
+    private static function render_signup_review_decision_panel(array $access_request): void
+    {
+        if (!current_user_can('list_users')) {
+            return;
+        }
+
+        $action_url = admin_url('admin-post.php');
+        $current_owner = (int) ($access_request['admin_owner_user_id'] ?? 0);
+        $current_readiness = (string) ($access_request['provisioning_readiness_status'] ?? '');
+
+        echo '<section class="abit-profile-panel" style="margin-top:16px;"><h2>Admin Qualification Decision</h2>';
+        echo '<form method="post" action="' . esc_url($action_url) . '">';
+        wp_nonce_field('abit_saas_auth_admin_decision_' . (int) $access_request['id']);
+        echo '<input type="hidden" name="action" value="abit_saas_auth_admin_decision" />';
+        echo '<input type="hidden" name="access_request_id" value="' . esc_attr((string) (int) $access_request['id']) . '" />';
+        echo '<table class="form-table" role="presentation"><tbody>';
+
+        echo '<tr><th scope="row"><label for="abit_admin_decision">Decision</label></th><td><select id="abit_admin_decision" name="decision" required>';
+        foreach (self::admin_decision_options() as $value => $label) {
+            echo '<option value="' . esc_attr($value) . '">' . esc_html($label) . '</option>';
+        }
+        echo '</select></td></tr>';
+
+        echo '<tr><th scope="row"><label for="abit_admin_owner_user_id">Assign owner</label></th><td><select id="abit_admin_owner_user_id" name="admin_owner_user_id">';
+        echo '<option value="0">No admin owner</option>';
+        foreach (self::admin_owner_options() as $owner) {
+            $owner_id = (int) $owner['id'];
+            echo '<option value="' . esc_attr((string) $owner_id) . '"' . selected($current_owner, $owner_id, false) . '>' . esc_html($owner['label']) . '</option>';
+        }
+        echo '</select></td></tr>';
+
+        echo '<tr><th scope="row"><label for="abit_provisioning_readiness_status">Provisioning readiness</label></th><td><select id="abit_provisioning_readiness_status" name="provisioning_readiness_status">';
+        foreach (self::provisioning_readiness_options() as $value => $label) {
+            echo '<option value="' . esc_attr($value) . '"' . selected($current_readiness, $value, false) . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select></td></tr>';
+
+        echo '<tr><th scope="row"><label for="abit_admin_decision_reason">Reason</label></th><td><textarea id="abit_admin_decision_reason" name="reason" rows="5" class="large-text" required></textarea><p class="description">Required for every admin decision. Stored on the access request and in the audit event.</p></td></tr>';
+        echo '</tbody></table>';
+        submit_button('Save decision');
+        echo '</form></section>';
+    }
+
+    private static function admin_decision_options(): array
+    {
+        return [
+            'approve' => 'Approve',
+            'hold' => 'Hold',
+            'reject' => 'Reject',
+            'request_info' => 'Request information',
+            'assign_owner' => 'Assign owner only',
+            'update_provisioning_readiness' => 'Update provisioning readiness only',
+        ];
+    }
+
+    private static function provisioning_readiness_options(): array
+    {
+        return [
+            '' => 'Use global capacity setting',
+            self::PROVISIONING_READINESS_NOT_READY => 'Not ready',
+            self::PROVISIONING_READINESS_READY => 'Ready',
+            self::PROVISIONING_READINESS_BLOCKED => 'Blocked',
+        ];
+    }
+
+    private static function admin_owner_options(): array
+    {
+        $users = get_users(
+            [
+                'orderby' => 'display_name',
+                'order' => 'ASC',
+            ]
+        );
+
+        $owners = [];
+        foreach ($users as $user) {
+            if (!$user instanceof WP_User || !user_can($user, 'list_users')) {
+                continue;
+            }
+
+            $owners[] = [
+                'id' => (int) $user->ID,
+                'label' => self::first_non_empty([$user->display_name, $user->user_email, 'User #' . (int) $user->ID]) . ' <' . $user->user_email . '>',
+            ];
+        }
+
+        return $owners;
     }
 
     private static function render_signup_profile_panel(string $title, array $rows): void
@@ -589,6 +720,16 @@ final class ABiT_SaaS_Auth_API
                 'event' => 'Terms and privacy accepted',
                 'status' => 'Captured',
                 'details' => 'Audit #' . (int) $consent['id'] . '; terms ' . (string) $consent['terms_version'] . '; privacy ' . (string) $consent['privacy_version'] . '; locale ' . (string) $consent['legal_locale'],
+            ];
+        }
+
+        if (!empty($access_request['admin_reviewed_at']) && !empty($access_request['admin_decision'])) {
+            $events[] = [
+                'created_at' => (string) $access_request['admin_reviewed_at'],
+                'source' => 'Admin',
+                'event' => 'Qualification decision',
+                'status' => self::signup_review_label((string) $access_request['admin_decision']),
+                'details' => self::signup_review_display_value($access_request['admin_decision_reason'] ?? ''),
             ];
         }
 
@@ -662,6 +803,34 @@ final class ABiT_SaaS_Auth_API
         return (int) ($access_request['user_id'] ?? 0) > 0 ? 'Missing user #' . (int) $access_request['user_id'] : 'No user linked';
     }
 
+    private static function signup_review_admin_owner_summary(array $access_request): string
+    {
+        $owner_id = (int) ($access_request['admin_owner_user_id'] ?? 0);
+        if ($owner_id <= 0) {
+            return 'Unassigned';
+        }
+
+        return '#' . $owner_id . ' - ' . self::first_non_empty([
+            $access_request['admin_owner_name'] ?? null,
+            $access_request['admin_owner_email'] ?? null,
+            'Missing user',
+        ]);
+    }
+
+    private static function signup_review_reviewer_summary(array $access_request): string
+    {
+        $reviewer_id = (int) ($access_request['admin_reviewed_by'] ?? 0);
+        if ($reviewer_id <= 0) {
+            return '';
+        }
+
+        return '#' . $reviewer_id . ' - ' . self::first_non_empty([
+            $access_request['reviewer_name'] ?? null,
+            $access_request['reviewer_email'] ?? null,
+            'Missing user',
+        ]);
+    }
+
     private static function signup_review_workspace_summary($workspace): string
     {
         if (!is_array($workspace)) {
@@ -730,6 +899,16 @@ final class ABiT_SaaS_Auth_API
             self::REVIEW_STATUS_APPROVED => 'Approved for MVP access',
             self::REVIEW_STATUS_REJECTED => 'Rejected',
             self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED => 'More information requested',
+            self::REVIEW_STATUS_ON_HOLD => 'On hold',
+            'approve' => 'Approve',
+            'hold' => 'Hold',
+            'reject' => 'Reject',
+            'request_info' => 'Request information',
+            'assign_owner' => 'Assign owner',
+            'update_provisioning_readiness' => 'Update provisioning readiness',
+            self::PROVISIONING_READINESS_READY => 'Ready',
+            self::PROVISIONING_READINESS_NOT_READY => 'Not ready',
+            self::PROVISIONING_READINESS_BLOCKED => 'Blocked',
             'verified' => 'Verified',
             'unverified' => 'Unverified',
             '1_10' => '1-10',
@@ -765,6 +944,7 @@ final class ABiT_SaaS_Auth_API
             self::REVIEW_STATUS_APPROVED,
             self::REVIEW_STATUS_REJECTED,
             self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED,
+            self::REVIEW_STATUS_ON_HOLD,
         ];
     }
 
@@ -867,6 +1047,23 @@ final class ABiT_SaaS_Auth_API
                 'methods' => WP_REST_Server::CREATABLE,
                 'callback' => [__CLASS__, 'validate_workspace_slug'],
                 'permission_callback' => [__CLASS__, 'require_admin_review_access'],
+            ]
+        );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            '/admin/access-requests/(?P<id>\d+)/qualification-decision',
+            [
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'admin_qualification_decision'],
+                'permission_callback' => [__CLASS__, 'require_admin_review_access'],
+                'args' => [
+                    'id' => [
+                        'validate_callback' => static function ($value): bool {
+                            return (int) $value > 0;
+                        },
+                    ],
+                ],
             ]
         );
     }
@@ -1017,6 +1214,15 @@ final class ABiT_SaaS_Auth_API
                 workspace_slug_override VARCHAR(96) NULL,
                 persona VARCHAR(64) NULL,
                 review_status VARCHAR(64) NOT NULL,
+                admin_owner_user_id BIGINT UNSIGNED NULL,
+                admin_decision VARCHAR(64) NULL,
+                admin_decision_reason TEXT NULL,
+                admin_reviewed_by BIGINT UNSIGNED NULL,
+                admin_reviewed_at DATETIME NULL,
+                provisioning_readiness_status VARCHAR(32) NULL,
+                provisioning_readiness_reason TEXT NULL,
+                provisioning_readiness_updated_by BIGINT UNSIGNED NULL,
+                provisioning_readiness_updated_at DATETIME NULL,
                 email_verified_at DATETIME NULL,
                 terms_privacy_accepted_at DATETIME NULL,
                 terms_version VARCHAR(64) NULL,
@@ -1037,6 +1243,9 @@ final class ABiT_SaaS_Auth_API
                 KEY user_id (user_id),
                 KEY company_id (company_id),
                 KEY review_status (review_status),
+                KEY admin_owner_user_id (admin_owner_user_id),
+                KEY admin_decision (admin_decision),
+                KEY provisioning_readiness_status (provisioning_readiness_status),
                 KEY email_delivery_status (email_delivery_status),
                 KEY workspace_slug_override (workspace_slug_override),
                 KEY company_size (company_size),
@@ -1943,6 +2152,70 @@ final class ABiT_SaaS_Auth_API
         return new WP_REST_Response($result, $status);
     }
 
+    public static function admin_qualification_decision(WP_REST_Request $request): WP_REST_Response
+    {
+        self::maybe_install_schema();
+
+        $result = self::apply_admin_qualification_decision(
+            (int) $request['id'],
+            self::request_payload($request),
+            self::current_authenticated_user_id()
+        );
+
+        if (is_wp_error($result)) {
+            $error_data = $result->get_error_data();
+            return new WP_REST_Response(
+                [
+                    'message' => $result->get_error_message(),
+                    'code' => $result->get_error_code(),
+                ],
+                is_array($error_data) ? (int) ($error_data['status'] ?? 422) : 422
+            );
+        }
+
+        return new WP_REST_Response(
+            [
+                'message' => 'Admin qualification decision saved.',
+                'access_request' => $result,
+            ],
+            200
+        );
+    }
+
+    public static function handle_admin_decision_post(): void
+    {
+        self::maybe_install_schema();
+
+        $post = wp_unslash($_POST);
+        $access_request_id = isset($post['access_request_id']) ? (int) $post['access_request_id'] : 0;
+        $redirect_url = add_query_arg(
+            [
+                'page' => 'abit-signup-review',
+                'access_request_id' => $access_request_id,
+            ],
+            admin_url('tools.php')
+        );
+
+        if (!current_user_can('list_users')) {
+            wp_safe_redirect(add_query_arg('decision_error', 'permission_denied', $redirect_url));
+            exit;
+        }
+
+        if (!check_admin_referer('abit_saas_auth_admin_decision_' . $access_request_id, '_wpnonce', false)) {
+            wp_safe_redirect(add_query_arg('decision_error', 'invalid_nonce', $redirect_url));
+            exit;
+        }
+
+        $result = self::apply_admin_qualification_decision($access_request_id, $post, get_current_user_id());
+        if (is_wp_error($result)) {
+            wp_safe_redirect(add_query_arg('decision_error', $result->get_error_code(), $redirect_url));
+            exit;
+        }
+
+        wp_safe_redirect(add_query_arg('decision_updated', '1', $redirect_url));
+        exit;
+    }
+
     public static function require_authentication()
     {
         if (self::current_authenticated_user_id() > 0) {
@@ -1974,6 +2247,129 @@ final class ABiT_SaaS_Auth_API
         if (function_exists('abitai_auth_write_audit_log')) {
             abitai_auth_write_audit_log($event_type, $context);
         }
+    }
+
+    private static function apply_admin_qualification_decision(int $access_request_id, array $payload, int $actor_user_id)
+    {
+        if (!current_user_can('list_users')) {
+            return new WP_Error('permission_denied', 'Admin review access is required.', ['status' => 403]);
+        }
+
+        if ($access_request_id <= 0) {
+            return new WP_Error('not_found', 'Access request not found.', ['status' => 404]);
+        }
+
+        $decision = sanitize_key((string) ($payload['decision'] ?? ''));
+        if (!array_key_exists($decision, self::admin_decision_options())) {
+            return new WP_Error('invalid_decision', 'Select a valid qualification decision.', ['status' => 422]);
+        }
+
+        $reason = self::clean_textarea($payload['reason'] ?? $payload['admin_decision_reason'] ?? '');
+        if (strlen($reason) < 10 || strlen($reason) > 1000 || self::has_unsafe_text($reason) || self::is_links_only($reason)) {
+            return new WP_Error('invalid_reason', 'Enter a decision reason between 10 and 1000 characters.', ['status' => 422]);
+        }
+
+        $admin_owner_user_id = isset($payload['admin_owner_user_id']) ? max(0, (int) $payload['admin_owner_user_id']) : 0;
+        if ($admin_owner_user_id > 0) {
+            $admin_owner = get_userdata($admin_owner_user_id);
+            if (!$admin_owner instanceof WP_User || !user_can($admin_owner, 'list_users')) {
+                return new WP_Error('invalid_owner', 'Select a valid admin owner.', ['status' => 422]);
+            }
+        }
+
+        $readiness_status = sanitize_key((string) ($payload['provisioning_readiness_status'] ?? ''));
+        if (!array_key_exists($readiness_status, self::provisioning_readiness_options())) {
+            return new WP_Error('invalid_readiness', 'Select a valid provisioning readiness value.', ['status' => 422]);
+        }
+
+        global $wpdb;
+        $access_request = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT id, user_id, company_id, review_status, admin_owner_user_id, provisioning_readiness_status FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1',
+                $access_request_id
+            ),
+            ARRAY_A
+        );
+
+        if (!is_array($access_request)) {
+            return new WP_Error('not_found', 'Access request not found.', ['status' => 404]);
+        }
+
+        $status_by_decision = [
+            'approve' => self::REVIEW_STATUS_APPROVED,
+            'hold' => self::REVIEW_STATUS_ON_HOLD,
+            'reject' => self::REVIEW_STATUS_REJECTED,
+            'request_info' => self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED,
+        ];
+        $old_status = (string) $access_request['review_status'];
+        $new_status = $status_by_decision[$decision] ?? $old_status;
+        $now = current_time('mysql', true);
+
+        $update = [
+            'review_status' => $new_status,
+            'admin_owner_user_id' => $admin_owner_user_id > 0 ? $admin_owner_user_id : null,
+            'admin_decision' => $decision,
+            'admin_decision_reason' => $reason,
+            'admin_reviewed_by' => $actor_user_id > 0 ? $actor_user_id : null,
+            'admin_reviewed_at' => $now,
+            'provisioning_readiness_status' => $readiness_status !== '' ? $readiness_status : null,
+            'provisioning_readiness_reason' => $readiness_status !== '' ? $reason : null,
+            'provisioning_readiness_updated_by' => $actor_user_id > 0 ? $actor_user_id : null,
+            'provisioning_readiness_updated_at' => $readiness_status !== '' ? $now : null,
+            'updated_at' => $now,
+        ];
+
+        $updated = $wpdb->update(
+            self::table('access_requests'),
+            $update,
+            ['id' => $access_request_id],
+            ['%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s'],
+            ['%d']
+        );
+
+        if (false === $updated) {
+            return new WP_Error('update_failed', 'Decision could not be saved.', ['status' => 500]);
+        }
+
+        update_user_meta((int) $access_request['user_id'], 'abit_saas_review_status', $new_status);
+        update_user_meta((int) $access_request['user_id'], 'abitai_access_request_status', $new_status);
+        if ($admin_owner_user_id > 0) {
+            update_user_meta((int) $access_request['user_id'], 'abit_saas_admin_owner_user_id', $admin_owner_user_id);
+        } else {
+            delete_user_meta((int) $access_request['user_id'], 'abit_saas_admin_owner_user_id');
+        }
+
+        self::audit_event(
+            'auth_admin_qualification_decision',
+            [
+                'actor_user_id' => $actor_user_id,
+                'actor_type' => 'admin',
+                'entity_type' => 'access_request',
+                'entity_id' => $access_request_id,
+                'access_request_id' => $access_request_id,
+                'company_id' => (int) $access_request['company_id'],
+                'event_data' => [
+                    'decision' => $decision,
+                    'reason' => $reason,
+                    'previous_review_status' => $old_status,
+                    'review_status' => $new_status,
+                    'admin_owner_user_id' => $admin_owner_user_id > 0 ? $admin_owner_user_id : null,
+                    'previous_admin_owner_user_id' => !empty($access_request['admin_owner_user_id']) ? (int) $access_request['admin_owner_user_id'] : null,
+                    'provisioning_readiness_status' => $readiness_status !== '' ? $readiness_status : null,
+                    'previous_provisioning_readiness_status' => self::nullable_key($access_request['provisioning_readiness_status'] ?? null),
+                ],
+            ]
+        );
+
+        return [
+            'id' => $access_request_id,
+            'status' => $new_status,
+            'decision' => $decision,
+            'admin_owner_user_id' => $admin_owner_user_id > 0 ? $admin_owner_user_id : null,
+            'provisioning_readiness_status' => $readiness_status !== '' ? $readiness_status : null,
+            'reviewed_by' => $actor_user_id > 0 ? $actor_user_id : null,
+            'reviewed_at' => $now,
+        ];
     }
 
     private static function request_payload(WP_REST_Request $request): array
@@ -2198,7 +2594,7 @@ final class ABiT_SaaS_Auth_API
 
         $access_request = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
                 $user->ID,
                 $user->user_email
             ),
@@ -2633,6 +3029,7 @@ final class ABiT_SaaS_Auth_API
             self::REVIEW_STATUS_ONBOARDING_REQUIRED => ['state' => 'onboarding_required', 'route' => 'onboarding'],
             self::REVIEW_STATUS_PENDING_ADMIN_REVIEW => ['state' => 'review_pending', 'route' => 'review_pending'],
             self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED => ['state' => 'more_information_requested', 'route' => 'onboarding'],
+            self::REVIEW_STATUS_ON_HOLD => ['state' => 'on_hold', 'route' => 'review_pending'],
             self::REVIEW_STATUS_APPROVED => ['state' => 'approved', 'route' => 'app'],
             self::REVIEW_STATUS_REJECTED => ['state' => 'rejected', 'route' => 'rejected'],
         ];
@@ -2665,6 +3062,7 @@ final class ABiT_SaaS_Auth_API
             self::REVIEW_STATUS_ONBOARDING_REQUIRED => '/auth/onboarding',
             self::REVIEW_STATUS_PENDING_ADMIN_REVIEW => '/auth/review-pending',
             self::REVIEW_STATUS_MORE_INFORMATION_REQUESTED => '/auth/more-information',
+            self::REVIEW_STATUS_ON_HOLD => '/auth/review-pending',
             self::REVIEW_STATUS_APPROVED => '/dashboard',
             self::REVIEW_STATUS_REJECTED => '/auth/rejected',
         ];
@@ -3389,7 +3787,8 @@ final class ABiT_SaaS_Auth_API
                 ],
                 'capacity_readiness' => [
                     'ready' => $capacity_ready,
-                    'source' => self::provisioning_capacity_ready_source(),
+                    'source' => self::provisioning_capacity_ready_source($access_request),
+                    'reason' => self::first_non_empty([$access_request['provisioning_readiness_reason'] ?? null]),
                 ],
             ],
         ];
@@ -3397,6 +3796,16 @@ final class ABiT_SaaS_Auth_API
 
     private static function provisioning_capacity_ready(WP_User $user, ?array $access_request): bool
     {
+        if (is_array($access_request)) {
+            $readiness_status = (string) ($access_request['provisioning_readiness_status'] ?? '');
+            if ($readiness_status === self::PROVISIONING_READINESS_READY) {
+                return true;
+            }
+            if (in_array($readiness_status, [self::PROVISIONING_READINESS_NOT_READY, self::PROVISIONING_READINESS_BLOCKED], true)) {
+                return false;
+            }
+        }
+
         $configured = self::env_value('ABIT_SAAS_PROVISIONING_CAPACITY_READY');
         if ($configured === '') {
             $configured = (string) get_option('abit_saas_provisioning_capacity_ready', '');
@@ -3406,8 +3815,12 @@ final class ABiT_SaaS_Auth_API
         return (bool) apply_filters('abit_saas_auth_provisioning_capacity_ready', $ready, $access_request, $user);
     }
 
-    private static function provisioning_capacity_ready_source(): string
+    private static function provisioning_capacity_ready_source(?array $access_request = null): string
     {
+        if (is_array($access_request) && self::first_non_empty([$access_request['provisioning_readiness_status'] ?? null]) !== '') {
+            return 'access_request';
+        }
+
         if (self::env_value('ABIT_SAAS_PROVISIONING_CAPACITY_READY') !== '') {
             return 'env';
         }
