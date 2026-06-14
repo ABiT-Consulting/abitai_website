@@ -310,11 +310,12 @@ function abitai_auth_render_signup_slot() {
 	<div class="abit-auth-alert abit-auth-alert--success abit-auth-signup-success" role="status" hidden>
 		<strong><?php esc_html_e( 'Creating request...', 'astra' ); ?></strong>
 	</div>
-	<div class="abit-auth-stepper" aria-label="<?php echo esc_attr__( 'Signup progress', 'astra' ); ?>">
-		<div class="abit-auth-stepper__item is-active" aria-current="step" data-auth-stepper-item="account"><span class="abit-auth-stepper__marker">1</span><span><?php esc_html_e( 'Account', 'astra' ); ?></span></div>
-		<div class="abit-auth-stepper__item" data-auth-stepper-item="company"><span class="abit-auth-stepper__marker">2</span><span><?php esc_html_e( 'Company', 'astra' ); ?></span></div>
-		<div class="abit-auth-stepper__item" data-auth-stepper-item="modules"><span class="abit-auth-stepper__marker">3</span><span><?php esc_html_e( 'ERP needs', 'astra' ); ?></span></div>
-	</div>
+	<ol class="abit-auth-stepper" aria-label="<?php echo esc_attr__( 'Signup progress', 'astra' ); ?>">
+		<li class="abit-auth-stepper__item is-active" aria-current="step" data-auth-stepper-item="account"><span class="abit-auth-stepper__marker" aria-hidden="true">1</span><span><?php esc_html_e( 'Account', 'astra' ); ?></span></li>
+		<li class="abit-auth-stepper__item" data-auth-stepper-item="company"><span class="abit-auth-stepper__marker" aria-hidden="true">2</span><span><?php esc_html_e( 'Company', 'astra' ); ?></span></li>
+		<li class="abit-auth-stepper__item" data-auth-stepper-item="modules"><span class="abit-auth-stepper__marker" aria-hidden="true">3</span><span><?php esc_html_e( 'ERP needs', 'astra' ); ?></span></li>
+	</ol>
+	<p class="abit-auth-sr-only" aria-live="polite" data-auth-step-status><?php esc_html_e( 'Step 1 of 3: Account', 'astra' ); ?></p>
 	<form class="abit-auth-form" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" method="post" data-auth-signup-form novalidate>
 		<input type="hidden" name="action" value="abitai_user_signup" />
 		<input type="hidden" name="abitai_signup_flow_version" value="company_step" />
@@ -428,13 +429,14 @@ function abitai_auth_render_signup_slot() {
 				<h3><?php esc_html_e( 'ERP module interest', 'astra' ); ?></h3>
 				<p><?php esc_html_e( 'Select the ERPNext areas you want to evaluate first.', 'astra' ); ?></p>
 			</div>
-			<fieldset class="abit-auth-module-selector" data-auth-field="erp_module_interest" aria-describedby="abit-auth-module-interest-error">
+			<fieldset class="abit-auth-module-selector" data-auth-field="erp_module_interest" aria-describedby="abit-auth-module-interest-help abit-auth-module-interest-error">
 				<legend><?php esc_html_e( 'ERP module interest', 'astra' ); ?></legend>
+				<p id="abit-auth-module-interest-help" class="abit-auth-help"><?php esc_html_e( 'Choose one or more areas.', 'astra' ); ?></p>
 				<p id="abit-auth-module-interest-error" class="abit-auth-error" hidden><?php esc_html_e( 'Select at least one ERP module interest.', 'astra' ); ?></p>
 				<div class="abit-auth-module-grid">
 					<?php foreach ( $module_options as $value => $label ) : ?>
 						<label class="abit-auth-module-option<?php echo in_array( $value, $selected_modules, true ) ? ' is-selected' : ''; ?>">
-							<input type="checkbox" name="erp_module_interest[]" value="<?php echo esc_attr( $value ); ?>" <?php checked( in_array( $value, $selected_modules, true ) ); ?> />
+							<input type="checkbox" name="erp_module_interest[]" value="<?php echo esc_attr( $value ); ?>" aria-describedby="abit-auth-module-interest-help abit-auth-module-interest-error" <?php checked( in_array( $value, $selected_modules, true ) ); ?> />
 							<span><?php echo esc_html( $label ); ?></span>
 						</label>
 					<?php endforeach; ?>
@@ -489,8 +491,9 @@ function abitai_auth_render_verify_slot() {
 			<?php if ( '' === $email_value && 'failed' === $state ) : ?>
 				<div class="abit-auth-field" data-auth-field="resend_email">
 					<label for="abit-auth-resend-email"><?php esc_html_e( 'Business email', 'astra' ); ?></label>
-					<input id="abit-auth-resend-email" class="abit-auth-input" type="email" name="email" autocomplete="email" inputmode="email" aria-describedby="abit-auth-resend-email-help" required />
+					<input id="abit-auth-resend-email" class="abit-auth-input" type="email" name="email" autocomplete="email" inputmode="email" aria-describedby="abit-auth-resend-email-help abit-auth-resend-email-error" required />
 					<p id="abit-auth-resend-email-help" class="abit-auth-help"><?php esc_html_e( 'If an eligible request exists, we will send a new verification link.', 'astra' ); ?></p>
+					<p id="abit-auth-resend-email-error" class="abit-auth-error" hidden><?php esc_html_e( 'Enter a valid business email address.', 'astra' ); ?></p>
 				</div>
 			<?php else : ?>
 				<input type="hidden" name="email" value="<?php echo esc_attr( $email_value ); ?>" />

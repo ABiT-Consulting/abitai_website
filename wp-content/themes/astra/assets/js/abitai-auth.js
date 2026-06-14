@@ -2,8 +2,12 @@
 	'use strict';
 
 	function setFieldError( field, messageNode, input, hasError ) {
-		field.classList.toggle( 'is-error', hasError );
-		input.setAttribute( 'aria-invalid', hasError ? 'true' : 'false' );
+		if ( field ) {
+			field.classList.toggle( 'is-error', hasError );
+		}
+		if ( input ) {
+			input.setAttribute( 'aria-invalid', hasError ? 'true' : 'false' );
+		}
 		if ( messageNode ) {
 			messageNode.hidden = ! hasError;
 		}
@@ -137,6 +141,7 @@
 		var accountStepper = document.querySelector( '[data-auth-stepper-item="account"]' );
 		var companyStepper = document.querySelector( '[data-auth-stepper-item="company"]' );
 		var modulesStepper = document.querySelector( '[data-auth-stepper-item="modules"]' );
+		var stepStatus = document.querySelector( '[data-auth-step-status]' );
 		var submit = form.querySelector( '[data-auth-submit]' );
 		var success = document.querySelector( '.abit-auth-signup-success' );
 		var defaultLabel = submit ? submit.textContent : '';
@@ -216,6 +221,7 @@
 		function markError( key, hasError ) {
 			if ( 'erp_module_interest' === key ) {
 				fields[ key ].field.classList.toggle( 'is-error', hasError );
+				fields[ key ].field.setAttribute( 'aria-invalid', hasError ? 'true' : 'false' );
 				fields[ key ].inputs.forEach( function ( input ) {
 					input.setAttribute( 'aria-invalid', hasError ? 'true' : 'false' );
 				} );
@@ -321,6 +327,10 @@
 					modulesStepper.removeAttribute( 'aria-current' );
 				}
 			}
+
+			if ( stepStatus ) {
+				stepStatus.textContent = isAccount ? 'Step 1 of 3: Account' : ( isCompany ? 'Step 2 of 3: Company' : 'Step 3 of 3: ERP needs' );
+			}
 		}
 
 		function getDraftFields() {
@@ -404,6 +414,9 @@
 					} );
 
 					field.field.classList.remove( 'is-error' );
+					if ( field.field.hasAttribute( 'aria-invalid' ) ) {
+						field.field.removeAttribute( 'aria-invalid' );
+					}
 					if ( field.error ) {
 						field.error.hidden = true;
 					}
@@ -462,12 +475,20 @@
 		restoreDraft();
 
 		form.addEventListener( 'submit', function ( event ) {
-			var isAccountValid = validateAccountStep();
-			var isCompanyValid = isAccountValid ? validateCompanyStep() : false;
-			var isModulesValid = isCompanyValid ? validateModulesStep() : false;
+			setStep( 'account' );
+			if ( ! validateAccountStep() ) {
+				event.preventDefault();
+				return;
+			}
 
-			if ( ! isAccountValid || ! isCompanyValid || ! isModulesValid ) {
-				setStep( ! isAccountValid ? 'account' : ( ! isCompanyValid ? 'company' : 'modules' ) );
+			setStep( 'company' );
+			if ( ! validateCompanyStep() ) {
+				event.preventDefault();
+				return;
+			}
+
+			setStep( 'modules' );
+			if ( ! validateModulesStep() ) {
 				event.preventDefault();
 				return;
 			}
@@ -498,26 +519,21 @@
 	function initResendForm( form ) {
 		var email = form.querySelector( 'input[name="email"][type="email"]' );
 		var emailField = email ? form.querySelector( '[data-auth-field="resend_email"]' ) : null;
+		var emailError = form.querySelector( '#abit-auth-resend-email-error' );
 		var submit = form.querySelector( '[data-auth-submit]' );
 		var defaultLabel = submit ? submit.textContent : '';
 		var loadingLabel = submit ? submit.getAttribute( 'data-loading-label' ) : '';
 
 		if ( email ) {
 			email.addEventListener( 'input', function () {
-				email.removeAttribute( 'aria-invalid' );
-				if ( emailField ) {
-					emailField.classList.remove( 'is-error' );
-				}
+				setFieldError( emailField, emailError, email, false );
 			} );
 		}
 
 		form.addEventListener( 'submit', function ( event ) {
 			if ( email && ! isValidEmail( email.value.trim() ) ) {
 				event.preventDefault();
-				if ( emailField ) {
-					emailField.classList.add( 'is-error' );
-				}
-				email.setAttribute( 'aria-invalid', 'true' );
+				setFieldError( emailField, emailError, email, true );
 				email.focus();
 				return;
 			}
