@@ -809,6 +809,10 @@ function abitai_auth_get_reset_state() {
 		$state = $state_aliases[ $state ];
 	}
 
+	if ( '' !== $token && function_exists( 'abitai_auth_password_reset_token_state' ) && in_array( $state, array( '', 'checking', 'set' ), true ) ) {
+		$state = abitai_auth_password_reset_token_state( $token );
+	}
+
 	if ( '' === $state && '' !== $token ) {
 		$token_states = array(
 			'valid-reset-token'   => 'checking',

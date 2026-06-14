@@ -172,6 +172,7 @@ require_once ASTRA_THEME_DIR . 'inc/core/markup/class-astra-markup.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-schema.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-routes.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-auth-resend-verification-api.php';
+require_once ASTRA_THEME_DIR . 'inc/abitai-auth-password-reset.php';
 require_once ASTRA_THEME_DIR . 'inc/abitai-company-profile-api.php';
 
 /**
