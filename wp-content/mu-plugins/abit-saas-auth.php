@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.9';
+    private const SCHEMA_VERSION = '2026-06-14.10';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -302,7 +302,7 @@ final class ABiT_SaaS_Auth_API
             $where[] = 'ar.email_verified_at IS NULL';
         }
 
-        $sql = 'SELECT ar.id, ar.user_id, ar.admin_owner_user_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.persona, ar.review_status, ar.email_verified_at, ar.created_at, ar.updated_at, u.display_name AS owner_name, u.user_email AS owner_email, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ar.updated_at DESC, ar.created_at DESC LIMIT 200';
+        $sql = 'SELECT ar.id, ar.user_id, ar.admin_owner_user_id, ar.handoff_team, ar.handoff_priority, ar.handoff_next_action, ar.handoff_follow_up_date, ar.handoff_queue_status, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.persona, ar.review_status, ar.email_verified_at, ar.created_at, ar.updated_at, u.display_name AS owner_name, u.user_email AS owner_email, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ar.handoff_follow_up_date IS NULL ASC, ar.handoff_follow_up_date ASC, ar.updated_at DESC, ar.created_at DESC LIMIT 200';
 
         if (!empty($params)) {
             $sql = $wpdb->prepare($sql, $params);
@@ -352,7 +352,7 @@ final class ABiT_SaaS_Auth_API
     private static function render_signup_review_table(array $rows): void
     {
         echo '<table class="widefat fixed striped"><thead><tr>';
-        foreach (['Request', 'User', 'Company', 'Verification', 'Industry', 'Size', 'Country', 'Modules', 'Risk', 'Owner', 'Status'] as $heading) {
+        foreach (['Request', 'User', 'Company', 'Verification', 'Industry', 'Size', 'Country', 'Modules', 'Risk', 'Handoff', 'Status'] as $heading) {
             echo '<th scope="col">' . esc_html($heading) . '</th>';
         }
         echo '</tr></thead><tbody>';
@@ -384,7 +384,7 @@ final class ABiT_SaaS_Auth_API
                 echo '<td>' . esc_html((string) ($row['country_region'] ?? '')) . '</td>';
                 echo '<td>' . esc_html(self::signup_review_module_summary($modules)) . '</td>';
                 echo '<td>' . esc_html(self::signup_review_risk($row, $modules)) . '</td>';
-                echo '<td>' . esc_html($owner) . '</td>';
+                echo '<td>' . esc_html(self::signup_review_handoff_summary($row, $owner)) . '</td>';
                 echo '<td>' . esc_html(self::signup_review_label((string) ($row['review_status'] ?? ''))) . '</td>';
                 echo '</tr>';
             }
@@ -437,7 +437,13 @@ final class ABiT_SaaS_Auth_API
             [
                 'Request ID' => '#' . (int) $access_request['id'],
                 'Review status' => self::signup_review_label((string) $access_request['review_status']),
+                'Queue status' => self::signup_review_label((string) ($access_request['handoff_queue_status'] ?? '')),
                 'Admin owner' => self::signup_review_admin_owner_summary($access_request),
+                'Handoff team' => self::signup_review_label((string) ($access_request['handoff_team'] ?? '')),
+                'Priority' => self::signup_review_label((string) ($access_request['handoff_priority'] ?? '')),
+                'Next action' => (string) ($access_request['handoff_next_action'] ?? ''),
+                'Follow-up date' => (string) ($access_request['handoff_follow_up_date'] ?? ''),
+                'Source campaign' => (string) ($access_request['source_campaign'] ?? ''),
                 'Last decision' => self::signup_review_label((string) ($access_request['admin_decision'] ?? '')),
                 'Decision reason' => (string) ($access_request['admin_decision_reason'] ?? ''),
                 'Reviewed by' => self::signup_review_reviewer_summary($access_request),
@@ -501,7 +507,7 @@ final class ABiT_SaaS_Auth_API
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status, u.user_login, u.user_email AS owner_email, u.display_name AS owner_name, u.user_registered, u.user_status, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email, ru.display_name AS reviewer_name, ru.user_email AS reviewer_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id LEFT JOIN ' . $wpdb->users . ' ru ON ru.ID = ar.admin_reviewed_by WHERE ar.id = %d LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.handoff_team, ar.handoff_priority, ar.handoff_next_action, ar.handoff_follow_up_date, ar.source_campaign, ar.handoff_notes, ar.handoff_queue_status, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status, u.user_login, u.user_email AS owner_email, u.display_name AS owner_name, u.user_registered, u.user_status, au.display_name AS admin_owner_name, au.user_email AS admin_owner_email, ru.display_name AS reviewer_name, ru.user_email AS reviewer_email FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id LEFT JOIN ' . $wpdb->users . ' u ON u.ID = ar.user_id LEFT JOIN ' . $wpdb->users . ' au ON au.ID = ar.admin_owner_user_id LEFT JOIN ' . $wpdb->users . ' ru ON ru.ID = ar.admin_reviewed_by WHERE ar.id = %d LIMIT 1',
                 $access_request_id
             ),
             ARRAY_A
@@ -559,6 +565,12 @@ final class ABiT_SaaS_Auth_API
             'invalid_decision' => 'Select a valid qualification decision.',
             'invalid_reason' => 'Enter a decision reason between 10 and 1000 characters.',
             'invalid_owner' => 'Select a valid admin owner.',
+            'invalid_handoff_team' => 'Select sales, support, or unassigned for the handoff queue.',
+            'invalid_handoff_priority' => 'Select a valid handoff priority.',
+            'invalid_handoff_next_action' => 'Enter a next action of 180 characters or fewer.',
+            'invalid_handoff_follow_up_date' => 'Enter a valid follow-up date.',
+            'invalid_source_campaign' => 'Enter a source campaign of 120 characters or fewer.',
+            'invalid_handoff_notes' => 'Enter handoff notes of 2000 characters or fewer.',
             'invalid_readiness' => 'Select a valid provisioning readiness value.',
             'update_failed' => 'Decision could not be saved.',
         ];
@@ -575,6 +587,8 @@ final class ABiT_SaaS_Auth_API
         $action_url = admin_url('admin-post.php');
         $current_owner = (int) ($access_request['admin_owner_user_id'] ?? 0);
         $current_readiness = (string) ($access_request['provisioning_readiness_status'] ?? '');
+        $current_team = (string) ($access_request['handoff_team'] ?? '');
+        $current_priority = (string) ($access_request['handoff_priority'] ?? 'normal');
 
         echo '<section class="abit-profile-panel" style="margin-top:16px;"><h2>Admin Qualification Decision</h2>';
         echo '<form method="post" action="' . esc_url($action_url) . '">';
@@ -597,6 +611,23 @@ final class ABiT_SaaS_Auth_API
         }
         echo '</select></td></tr>';
 
+        echo '<tr><th scope="row"><label for="abit_handoff_team">Assign queue</label></th><td><select id="abit_handoff_team" name="handoff_team">';
+        foreach (self::handoff_team_options() as $value => $label) {
+            echo '<option value="' . esc_attr($value) . '"' . selected($current_team, $value, false) . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select></td></tr>';
+
+        echo '<tr><th scope="row"><label for="abit_handoff_priority">Priority</label></th><td><select id="abit_handoff_priority" name="handoff_priority">';
+        foreach (self::handoff_priority_options() as $value => $label) {
+            echo '<option value="' . esc_attr($value) . '"' . selected($current_priority, $value, false) . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select></td></tr>';
+
+        echo '<tr><th scope="row"><label for="abit_handoff_next_action">Next action</label></th><td><input id="abit_handoff_next_action" name="handoff_next_action" type="text" class="regular-text" maxlength="180" value="' . esc_attr((string) ($access_request['handoff_next_action'] ?? '')) . '" /></td></tr>';
+        echo '<tr><th scope="row"><label for="abit_handoff_follow_up_date">Follow-up date</label></th><td><input id="abit_handoff_follow_up_date" name="handoff_follow_up_date" type="date" value="' . esc_attr((string) ($access_request['handoff_follow_up_date'] ?? '')) . '" /></td></tr>';
+        echo '<tr><th scope="row"><label for="abit_source_campaign">Source campaign</label></th><td><input id="abit_source_campaign" name="source_campaign" type="text" class="regular-text" maxlength="120" value="' . esc_attr((string) ($access_request['source_campaign'] ?? '')) . '" /></td></tr>';
+        echo '<tr><th scope="row"><label for="abit_handoff_notes">Handoff notes</label></th><td><textarea id="abit_handoff_notes" name="handoff_notes" rows="4" class="large-text">' . esc_textarea((string) ($access_request['handoff_notes'] ?? '')) . '</textarea><p class="description">Sales/support handoff notes. Signup notes are preserved separately below.</p></td></tr>';
+
         echo '<tr><th scope="row"><label for="abit_provisioning_readiness_status">Provisioning readiness</label></th><td><select id="abit_provisioning_readiness_status" name="provisioning_readiness_status">';
         foreach (self::provisioning_readiness_options() as $value => $label) {
             echo '<option value="' . esc_attr($value) . '"' . selected($current_readiness, $value, false) . '>' . esc_html($label) . '</option>';
@@ -618,6 +649,25 @@ final class ABiT_SaaS_Auth_API
             'request_info' => 'Request information',
             'assign_owner' => 'Assign owner only',
             'update_provisioning_readiness' => 'Update provisioning readiness only',
+        ];
+    }
+
+    private static function handoff_team_options(): array
+    {
+        return [
+            '' => 'Unassigned',
+            'sales' => 'Sales',
+            'support' => 'Support',
+        ];
+    }
+
+    private static function handoff_priority_options(): array
+    {
+        return [
+            'low' => 'Low',
+            'normal' => 'Normal',
+            'high' => 'High',
+            'urgent' => 'Urgent',
         ];
     }
 
@@ -697,6 +747,7 @@ final class ABiT_SaaS_Auth_API
     {
         echo '<section class="abit-profile-panel" style="margin-top:16px;"><h2>Notes</h2><dl>';
         echo '<dt>Signup notes</dt><dd class="abit-profile-notes">' . esc_html(self::signup_review_display_value($access_request['notes'] ?? '')) . '</dd>';
+        echo '<dt>Handoff notes</dt><dd class="abit-profile-notes">' . esc_html(self::signup_review_display_value($access_request['handoff_notes'] ?? '')) . '</dd>';
         echo '<dt>Provisioning notes</dt><dd class="abit-profile-notes">' . esc_html(self::signup_review_display_value($provisioning_request['notes'] ?? '')) . '</dd>';
         echo '</dl></section>';
     }
@@ -803,6 +854,22 @@ final class ABiT_SaaS_Auth_API
         return (int) ($access_request['user_id'] ?? 0) > 0 ? 'Missing user #' . (int) $access_request['user_id'] : 'No user linked';
     }
 
+    private static function signup_review_handoff_summary(array $row, string $owner): string
+    {
+        $parts = array_filter(
+            [
+                self::signup_review_label((string) ($row['handoff_queue_status'] ?? '')),
+                self::signup_review_label((string) ($row['handoff_team'] ?? '')),
+                self::signup_review_label((string) ($row['handoff_priority'] ?? '')),
+                $owner,
+                !empty($row['handoff_follow_up_date']) ? 'Follow-up ' . (string) $row['handoff_follow_up_date'] : '',
+                (string) ($row['handoff_next_action'] ?? ''),
+            ]
+        );
+
+        return empty($parts) ? 'Unassigned' : implode(' / ', $parts);
+    }
+
     private static function signup_review_admin_owner_summary(array $access_request): string
     {
         $owner_id = (int) ($access_request['admin_owner_user_id'] ?? 0);
@@ -906,6 +973,17 @@ final class ABiT_SaaS_Auth_API
             'request_info' => 'Request information',
             'assign_owner' => 'Assign owner',
             'update_provisioning_readiness' => 'Update provisioning readiness',
+            'sales' => 'Sales',
+            'support' => 'Support',
+            'low' => 'Low',
+            'normal' => 'Normal',
+            'high' => 'High',
+            'urgent' => 'Urgent',
+            'unassigned' => 'Unassigned',
+            'assigned' => 'Assigned',
+            'held' => 'Held',
+            'completed' => 'Completed',
+            'follow_up_due' => 'Follow-up due',
             self::PROVISIONING_READINESS_READY => 'Ready',
             self::PROVISIONING_READINESS_NOT_READY => 'Not ready',
             self::PROVISIONING_READINESS_BLOCKED => 'Blocked',
@@ -1215,6 +1293,13 @@ final class ABiT_SaaS_Auth_API
                 persona VARCHAR(64) NULL,
                 review_status VARCHAR(64) NOT NULL,
                 admin_owner_user_id BIGINT UNSIGNED NULL,
+                handoff_team VARCHAR(32) NULL,
+                handoff_priority VARCHAR(16) NULL DEFAULT 'normal',
+                handoff_next_action VARCHAR(180) NULL,
+                handoff_follow_up_date DATE NULL,
+                source_campaign VARCHAR(120) NULL,
+                handoff_notes TEXT NULL,
+                handoff_queue_status VARCHAR(32) NULL DEFAULT 'unassigned',
                 admin_decision VARCHAR(64) NULL,
                 admin_decision_reason TEXT NULL,
                 admin_reviewed_by BIGINT UNSIGNED NULL,
@@ -1244,6 +1329,10 @@ final class ABiT_SaaS_Auth_API
                 KEY company_id (company_id),
                 KEY review_status (review_status),
                 KEY admin_owner_user_id (admin_owner_user_id),
+                KEY handoff_team (handoff_team),
+                KEY handoff_priority (handoff_priority),
+                KEY handoff_follow_up_date (handoff_follow_up_date),
+                KEY handoff_queue_status (handoff_queue_status),
                 KEY admin_decision (admin_decision),
                 KEY provisioning_readiness_status (provisioning_readiness_status),
                 KEY email_delivery_status (email_delivery_status),
@@ -2282,10 +2371,40 @@ final class ABiT_SaaS_Auth_API
             return new WP_Error('invalid_readiness', 'Select a valid provisioning readiness value.', ['status' => 422]);
         }
 
+        $handoff_team = sanitize_key((string) ($payload['handoff_team'] ?? ''));
+        if (!array_key_exists($handoff_team, self::handoff_team_options())) {
+            return new WP_Error('invalid_handoff_team', 'Select sales, support, or unassigned for the handoff queue.', ['status' => 422]);
+        }
+
+        $handoff_priority = sanitize_key((string) ($payload['handoff_priority'] ?? 'normal'));
+        if (!array_key_exists($handoff_priority, self::handoff_priority_options())) {
+            return new WP_Error('invalid_handoff_priority', 'Select a valid handoff priority.', ['status' => 422]);
+        }
+
+        $handoff_next_action = self::clean_text($payload['handoff_next_action'] ?? '');
+        if (strlen($handoff_next_action) > 180 || self::has_unsafe_text($handoff_next_action)) {
+            return new WP_Error('invalid_handoff_next_action', 'Enter a next action of 180 characters or fewer.', ['status' => 422]);
+        }
+
+        $handoff_follow_up_date = self::normalize_date_value((string) ($payload['handoff_follow_up_date'] ?? ''));
+        if (is_wp_error($handoff_follow_up_date)) {
+            return new WP_Error('invalid_handoff_follow_up_date', 'Enter a valid follow-up date.', ['status' => 422]);
+        }
+
+        $source_campaign = self::clean_text($payload['source_campaign'] ?? '');
+        if (strlen($source_campaign) > 120 || self::has_unsafe_text($source_campaign)) {
+            return new WP_Error('invalid_source_campaign', 'Enter a source campaign of 120 characters or fewer.', ['status' => 422]);
+        }
+
+        $handoff_notes = self::clean_textarea($payload['handoff_notes'] ?? '');
+        if (strlen($handoff_notes) > 2000 || self::has_unsafe_text($handoff_notes)) {
+            return new WP_Error('invalid_handoff_notes', 'Enter handoff notes of 2000 characters or fewer.', ['status' => 422]);
+        }
+
         global $wpdb;
         $access_request = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT id, user_id, company_id, review_status, admin_owner_user_id, provisioning_readiness_status FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1',
+                'SELECT id, user_id, company_id, review_status, admin_owner_user_id, handoff_team, handoff_priority, handoff_next_action, handoff_follow_up_date, source_campaign, handoff_queue_status, provisioning_readiness_status FROM ' . self::table('access_requests') . ' WHERE id = %d LIMIT 1',
                 $access_request_id
             ),
             ARRAY_A
@@ -2304,10 +2423,18 @@ final class ABiT_SaaS_Auth_API
         $old_status = (string) $access_request['review_status'];
         $new_status = $status_by_decision[$decision] ?? $old_status;
         $now = current_time('mysql', true);
+        $handoff_queue_status = self::handoff_queue_status($new_status, $admin_owner_user_id, $handoff_team, (string) $handoff_follow_up_date);
 
         $update = [
             'review_status' => $new_status,
             'admin_owner_user_id' => $admin_owner_user_id > 0 ? $admin_owner_user_id : null,
+            'handoff_team' => $handoff_team !== '' ? $handoff_team : null,
+            'handoff_priority' => $handoff_priority,
+            'handoff_next_action' => $handoff_next_action !== '' ? $handoff_next_action : null,
+            'handoff_follow_up_date' => $handoff_follow_up_date !== '' ? $handoff_follow_up_date : null,
+            'source_campaign' => $source_campaign !== '' ? $source_campaign : null,
+            'handoff_notes' => $handoff_notes !== '' ? $handoff_notes : null,
+            'handoff_queue_status' => $handoff_queue_status,
             'admin_decision' => $decision,
             'admin_decision_reason' => $reason,
             'admin_reviewed_by' => $actor_user_id > 0 ? $actor_user_id : null,
@@ -2323,7 +2450,7 @@ final class ABiT_SaaS_Auth_API
             self::table('access_requests'),
             $update,
             ['id' => $access_request_id],
-            ['%s', '%d', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s'],
+            ['%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s'],
             ['%d']
         );
 
@@ -2333,6 +2460,26 @@ final class ABiT_SaaS_Auth_API
 
         update_user_meta((int) $access_request['user_id'], 'abit_saas_review_status', $new_status);
         update_user_meta((int) $access_request['user_id'], 'abitai_access_request_status', $new_status);
+        update_user_meta((int) $access_request['user_id'], 'abit_saas_handoff_priority', $handoff_priority);
+        update_user_meta((int) $access_request['user_id'], 'abitai_handoff_priority', $handoff_priority);
+        update_user_meta((int) $access_request['user_id'], 'abit_saas_handoff_queue_status', $handoff_queue_status);
+        update_user_meta((int) $access_request['user_id'], 'abitai_handoff_queue_status', $handoff_queue_status);
+        update_user_meta((int) $access_request['user_id'], 'abit_saas_handoff_team', $handoff_team);
+        update_user_meta((int) $access_request['user_id'], 'abitai_handoff_team', $handoff_team);
+        if ($handoff_follow_up_date !== '') {
+            update_user_meta((int) $access_request['user_id'], 'abit_saas_handoff_follow_up_date', $handoff_follow_up_date);
+            update_user_meta((int) $access_request['user_id'], 'abitai_handoff_follow_up_date', $handoff_follow_up_date);
+        } else {
+            delete_user_meta((int) $access_request['user_id'], 'abit_saas_handoff_follow_up_date');
+            delete_user_meta((int) $access_request['user_id'], 'abitai_handoff_follow_up_date');
+        }
+        if ($handoff_next_action !== '') {
+            update_user_meta((int) $access_request['user_id'], 'abit_saas_handoff_next_action', $handoff_next_action);
+            update_user_meta((int) $access_request['user_id'], 'abitai_handoff_next_action', $handoff_next_action);
+        } else {
+            delete_user_meta((int) $access_request['user_id'], 'abit_saas_handoff_next_action');
+            delete_user_meta((int) $access_request['user_id'], 'abitai_handoff_next_action');
+        }
         if ($admin_owner_user_id > 0) {
             update_user_meta((int) $access_request['user_id'], 'abit_saas_admin_owner_user_id', $admin_owner_user_id);
         } else {
@@ -2355,6 +2502,15 @@ final class ABiT_SaaS_Auth_API
                     'review_status' => $new_status,
                     'admin_owner_user_id' => $admin_owner_user_id > 0 ? $admin_owner_user_id : null,
                     'previous_admin_owner_user_id' => !empty($access_request['admin_owner_user_id']) ? (int) $access_request['admin_owner_user_id'] : null,
+                    'handoff_team' => $handoff_team !== '' ? $handoff_team : null,
+                    'previous_handoff_team' => self::nullable_key($access_request['handoff_team'] ?? null),
+                    'handoff_priority' => $handoff_priority,
+                    'previous_handoff_priority' => self::nullable_key($access_request['handoff_priority'] ?? null),
+                    'handoff_next_action' => $handoff_next_action !== '' ? $handoff_next_action : null,
+                    'handoff_follow_up_date' => $handoff_follow_up_date !== '' ? $handoff_follow_up_date : null,
+                    'source_campaign' => $source_campaign !== '' ? $source_campaign : null,
+                    'handoff_queue_status' => $handoff_queue_status,
+                    'previous_handoff_queue_status' => self::nullable_key($access_request['handoff_queue_status'] ?? null),
                     'provisioning_readiness_status' => $readiness_status !== '' ? $readiness_status : null,
                     'previous_provisioning_readiness_status' => self::nullable_key($access_request['provisioning_readiness_status'] ?? null),
                 ],
@@ -2366,6 +2522,10 @@ final class ABiT_SaaS_Auth_API
             'status' => $new_status,
             'decision' => $decision,
             'admin_owner_user_id' => $admin_owner_user_id > 0 ? $admin_owner_user_id : null,
+            'handoff_team' => $handoff_team !== '' ? $handoff_team : null,
+            'handoff_priority' => $handoff_priority,
+            'handoff_follow_up_date' => $handoff_follow_up_date !== '' ? $handoff_follow_up_date : null,
+            'handoff_queue_status' => $handoff_queue_status,
             'provisioning_readiness_status' => $readiness_status !== '' ? $readiness_status : null,
             'reviewed_by' => $actor_user_id > 0 ? $actor_user_id : null,
             'reviewed_at' => $now,
@@ -2594,7 +2754,7 @@ final class ABiT_SaaS_Auth_API
 
         $access_request = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
+                'SELECT ar.id, ar.user_id, ar.company_id, ar.full_name, ar.business_email, ar.company_name, ar.country_region, ar.intended_use_case, ar.role, ar.company_size, ar.industry, ar.primary_workflow, ar.erp_module_interest, ar.current_system, ar.timeline, ar.notes, ar.workspace_slug_override, ar.persona, ar.review_status, ar.admin_owner_user_id, ar.handoff_team, ar.handoff_priority, ar.handoff_next_action, ar.handoff_follow_up_date, ar.source_campaign, ar.handoff_notes, ar.handoff_queue_status, ar.admin_decision, ar.admin_decision_reason, ar.admin_reviewed_by, ar.admin_reviewed_at, ar.provisioning_readiness_status, ar.provisioning_readiness_reason, ar.provisioning_readiness_updated_by, ar.provisioning_readiness_updated_at, ar.email_verified_at, ar.terms_privacy_accepted_at, ar.terms_version, ar.privacy_version, ar.latest_consent_audit_record_id, ar.email_delivery_status, ar.email_delivery_last_event, ar.email_delivery_last_event_at, ar.email_delivery_sent_count, ar.email_delivery_failed_count, ar.email_delivery_bounced_count, ar.email_token_expired_count, ar.email_resend_throttled_count, ar.created_at, ar.updated_at, c.company_name AS company_record_name, c.country_region AS company_record_country_region, c.draft_status AS company_record_status FROM ' . self::table('access_requests') . ' ar LEFT JOIN ' . self::table('companies') . ' c ON c.id = ar.company_id WHERE ar.user_id = %d OR ar.business_email = %s ORDER BY ar.id DESC LIMIT 1',
                 $user->ID,
                 $user->user_email
             ),
@@ -4046,13 +4206,15 @@ final class ABiT_SaaS_Auth_API
                 'country_region' => $data['country_region'],
                 'intended_use_case' => $data['intended_use_case'],
                 'review_status' => self::REVIEW_STATUS_PENDING_EMAIL,
+                'handoff_priority' => 'normal',
+                'handoff_queue_status' => 'unassigned',
                 'terms_privacy_accepted_at' => $now,
                 'terms_version' => $legal['terms_version'],
                 'privacy_version' => $legal['privacy_version'],
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-            ['%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+            ['%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
         );
         if (false === $inserted || empty($wpdb->insert_id)) {
             throw new RuntimeException('Access request could not be created.');
@@ -4480,6 +4642,46 @@ final class ABiT_SaaS_Auth_API
     private static function clean_textarea($value): string
     {
         return trim(sanitize_textarea_field((string) $value));
+    }
+
+    private static function normalize_date_value(string $value)
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return new WP_Error('invalid_date', 'Invalid date.');
+        }
+
+        [$year, $month, $day] = array_map('intval', explode('-', $value));
+        if (!checkdate($month, $day, $year)) {
+            return new WP_Error('invalid_date', 'Invalid date.');
+        }
+
+        return $value;
+    }
+
+    private static function handoff_queue_status(string $review_status, int $admin_owner_user_id, string $handoff_team, string $follow_up_date): string
+    {
+        if ($review_status === self::REVIEW_STATUS_APPROVED || $review_status === self::REVIEW_STATUS_REJECTED) {
+            return 'completed';
+        }
+
+        if ($review_status === self::REVIEW_STATUS_ON_HOLD) {
+            return 'held';
+        }
+
+        if ($follow_up_date !== '' && strtotime($follow_up_date . ' 23:59:59 UTC') < time()) {
+            return 'follow_up_due';
+        }
+
+        if ($admin_owner_user_id > 0 || $handoff_team !== '') {
+            return 'assigned';
+        }
+
+        return 'unassigned';
     }
 
     private static function has_unsafe_text(string $value): bool

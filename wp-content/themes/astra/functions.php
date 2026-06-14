@@ -1221,6 +1221,7 @@ if ( ! function_exists( 'abitai_get_access_request_statuses' ) ) {
 			'onboarding_required'        => __( 'Company profile incomplete', 'astra' ),
 			'pending_admin_review'       => __( 'Pending admin review', 'astra' ),
 			'more_information_requested' => __( 'More information requested', 'astra' ),
+			'on_hold'                    => __( 'On hold', 'astra' ),
 			'approved_for_mvp_access'    => __( 'Approved for MVP access', 'astra' ),
 			'rejected'                   => __( 'Request rejected', 'astra' ),
 			'profile_incomplete'         => __( 'Profile incomplete', 'astra' ),
@@ -1245,6 +1246,7 @@ if ( ! function_exists( 'abitai_onboarding_state_aliases' ) ) {
 			'onboarding_required'        => 'profile_incomplete',
 			'pending_admin_review'       => 'ready_for_review',
 			'more_information_requested' => 'profile_incomplete',
+			'on_hold'                    => 'on_hold',
 			'approved_for_mvp_access'    => 'live',
 			'rejected'                   => 'blocked',
 			'profile-incomplete'         => 'profile_incomplete',
@@ -1268,6 +1270,7 @@ if ( ! function_exists( 'abitai_normalize_onboarding_state' ) ) {
 			'approved',
 			'provisioning',
 			'provisioned',
+			'on_hold',
 			'blocked',
 			'live',
 		);
@@ -1279,6 +1282,33 @@ if ( ! function_exists( 'abitai_normalize_onboarding_state' ) ) {
 		$aliases = abitai_onboarding_state_aliases();
 
 		return isset( $aliases[ $status ] ) ? $aliases[ $status ] : 'profile_incomplete';
+	}
+}
+
+if ( ! function_exists( 'abitai_auth_handoff_label' ) ) {
+	/**
+	 * Display label for handoff metadata stored on the current access request.
+	 *
+	 * @param string $value Handoff key.
+	 * @return string
+	 */
+	function abitai_auth_handoff_label( $value ) {
+		$value  = sanitize_key( (string) $value );
+		$labels = array(
+			'sales'         => __( 'Sales', 'astra' ),
+			'support'       => __( 'Support', 'astra' ),
+			'low'           => __( 'Low', 'astra' ),
+			'normal'        => __( 'Normal', 'astra' ),
+			'high'          => __( 'High', 'astra' ),
+			'urgent'        => __( 'Urgent', 'astra' ),
+			'unassigned'    => __( 'Unassigned', 'astra' ),
+			'assigned'      => __( 'Assigned', 'astra' ),
+			'held'          => __( 'Held', 'astra' ),
+			'completed'     => __( 'Completed', 'astra' ),
+			'follow_up_due' => __( 'Follow-up due', 'astra' ),
+		);
+
+		return isset( $labels[ $value ] ) ? $labels[ $value ] : '';
 	}
 }
 
@@ -1334,6 +1364,11 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 		$company_size          = isset( $_GET['company_size'] ) ? sanitize_key( wp_unslash( $_GET['company_size'] ) ) : '';
 		$primary_workflow      = isset( $_GET['primary_workflow'] ) ? sanitize_text_field( wp_unslash( $_GET['primary_workflow'] ) ) : '';
 		$selected_modules      = array();
+		$handoff_team          = '';
+		$handoff_priority      = '';
+		$handoff_next_action   = '';
+		$handoff_follow_up     = '';
+		$handoff_queue_status  = '';
 		$product_access       = ( 'live' === $status && ! is_user_logged_in() );
 		$missing_requirements = array();
 		$gate_checks          = array();
@@ -1352,6 +1387,11 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 			$industry     = '' !== $industry ? $industry : sanitize_key( (string) get_user_meta( $user_id, 'abitai_industry', true ) );
 			$company_size = '' !== $company_size ? $company_size : sanitize_key( (string) get_user_meta( $user_id, 'abitai_company_size', true ) );
 			$primary_workflow = '' !== $primary_workflow ? $primary_workflow : sanitize_text_field( (string) get_user_meta( $user_id, 'abitai_business_description', true ) );
+			$handoff_team = sanitize_key( (string) get_user_meta( $user_id, 'abitai_handoff_team', true ) );
+			$handoff_priority = sanitize_key( (string) get_user_meta( $user_id, 'abitai_handoff_priority', true ) );
+			$handoff_next_action = sanitize_text_field( (string) get_user_meta( $user_id, 'abitai_handoff_next_action', true ) );
+			$handoff_follow_up = sanitize_text_field( (string) get_user_meta( $user_id, 'abitai_handoff_follow_up_date', true ) );
+			$handoff_queue_status = sanitize_key( (string) get_user_meta( $user_id, 'abitai_handoff_queue_status', true ) );
 
 			if ( empty( $selected_modules ) ) {
 				$stored_modules = get_user_meta( $user_id, 'abitai_erp_module_interest', true );
@@ -1399,6 +1439,14 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_request' ) ) {
 			'company_size'         => isset( $company_size_options[ $company_size ] ) ? $company_size_options[ $company_size ] : '',
 			'primary_workflow'     => $primary_workflow,
 			'selected_modules'     => $module_labels,
+			'handoff_team'         => $handoff_team,
+			'handoff_team_label'   => abitai_auth_handoff_label( $handoff_team ),
+			'handoff_priority'     => $handoff_priority,
+			'handoff_priority_label' => abitai_auth_handoff_label( $handoff_priority ),
+			'handoff_next_action'  => $handoff_next_action,
+			'handoff_follow_up_date' => $handoff_follow_up,
+			'handoff_queue_status' => $handoff_queue_status,
+			'handoff_queue_label'  => abitai_auth_handoff_label( $handoff_queue_status ),
 			'product_access'       => $product_access,
 			'missing_requirements' => $missing_requirements,
 			'gate_checks'          => $gate_checks,
@@ -1464,6 +1512,20 @@ if ( ! function_exists( 'abitai_auth_get_dashboard_gate' ) ) {
 				$gate['alert_variant']       = 'warning';
 				$gate['alert_summary']       = __( 'Request submitted for review.', 'astra' );
 				$gate['alert_body']          = __( 'Product access remains blocked until admin approval.', 'astra' );
+				break;
+			case 'on_hold':
+				$gate['profile_state']       = __( 'Held', 'astra' );
+				$gate['profile_variant']     = 'review';
+				$gate['profile_description'] = __( 'The review team has paused this request for sales or support follow-up.', 'astra' );
+				$gate['provisioning_state']  = __( 'Paused', 'astra' );
+				$gate['provisioning_variant']= 'review';
+				$gate['provisioning_description'] = __( 'Workspace access remains paused while the assigned team completes follow-up.', 'astra' );
+				$gate['next_action']         = __( 'Follow-up in progress', 'astra' );
+				$gate['next_href']           = home_url( '/dashboard' );
+				$gate['next_variant']        = 'secondary';
+				$gate['alert_variant']       = 'warning';
+				$gate['alert_summary']       = __( 'Request is on hold.', 'astra' );
+				$gate['alert_body']          = __( 'The assigned team is reviewing the next step for this request.', 'astra' );
 				break;
 			case 'approved':
 				$gate['profile_state']       = __( 'Approved', 'astra' );

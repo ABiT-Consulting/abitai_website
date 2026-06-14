@@ -224,6 +224,12 @@ function abitai_auth_render_dashboard_gate_slot() {
 	$company_size = isset( $request['company_size'] ) && '' !== $request['company_size'] ? $request['company_size'] : __( 'Not provided yet', 'astra' );
 	$workflow     = isset( $request['primary_workflow'] ) && '' !== $request['primary_workflow'] ? $request['primary_workflow'] : __( 'Not provided yet', 'astra' );
 	$modules      = isset( $request['selected_modules'] ) && is_array( $request['selected_modules'] ) ? array_filter( $request['selected_modules'] ) : array();
+	$queue_status_key = ! empty( $request['handoff_queue_status'] ) ? (string) $request['handoff_queue_status'] : 'unassigned';
+	$queue_status = ! empty( $request['handoff_queue_label'] ) ? $request['handoff_queue_label'] : __( 'Unassigned', 'astra' );
+	$queue_team   = ! empty( $request['handoff_team_label'] ) ? $request['handoff_team_label'] : __( 'Review team', 'astra' );
+	$queue_priority = ! empty( $request['handoff_priority_label'] ) ? $request['handoff_priority_label'] : __( 'Normal', 'astra' );
+	$queue_next_action = ! empty( $request['handoff_next_action'] ) ? $request['handoff_next_action'] : $gate['next_action'];
+	$queue_follow_up = ! empty( $request['handoff_follow_up_date'] ) ? $request['handoff_follow_up_date'] : __( 'Not scheduled', 'astra' );
 	$next_action  = $gate['next_action'];
 	$workspace_state = $gate['provisioning_state'];
 
@@ -318,6 +324,19 @@ function abitai_auth_render_dashboard_gate_slot() {
 			</div>
 			<p><?php echo esc_html( $gate['provisioning_description'] ); ?></p>
 			<p class="abit-auth-dashboard-muted"><?php esc_html_e( 'Only customer-facing readiness is shown here.', 'astra' ); ?></p>
+		</section>
+
+		<section class="abit-auth-dashboard-card">
+			<div class="abit-auth-dashboard-card__header">
+				<span class="abit-auth-status-badge abit-auth-status-badge--<?php echo esc_attr( in_array( $queue_status_key, array( 'held', 'follow_up_due' ), true ) ? 'review' : 'pending' ); ?>"><?php echo esc_html( $queue_status ); ?></span>
+				<h3><?php esc_html_e( 'Queue status', 'astra' ); ?></h3>
+			</div>
+			<dl class="abit-auth-dashboard-list">
+				<div><dt><?php esc_html_e( 'Assigned queue', 'astra' ); ?></dt><dd><?php echo esc_html( $queue_team ); ?></dd></div>
+				<div><dt><?php esc_html_e( 'Priority', 'astra' ); ?></dt><dd><?php echo esc_html( $queue_priority ); ?></dd></div>
+				<div><dt><?php esc_html_e( 'Follow-up date', 'astra' ); ?></dt><dd><?php echo esc_html( $queue_follow_up ); ?></dd></div>
+				<div><dt><?php esc_html_e( 'Next action', 'astra' ); ?></dt><dd><?php echo esc_html( $queue_next_action ); ?></dd></div>
+			</dl>
 		</section>
 
 		<section class="abit-auth-dashboard-card">
