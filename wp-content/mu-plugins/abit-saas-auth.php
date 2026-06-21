@@ -48,6 +48,9 @@ final class ABiT_SaaS_Auth_API
         add_filter('retrieve_password_message', [__CLASS__, 'password_reset_message'], 10, 4);
         add_filter('wp_hash_password_algorithm', [__CLASS__, 'password_hash_algorithm'], 10, 1);
         add_filter('wp_hash_password_options', [__CLASS__, 'password_hash_options'], 10, 2);
+        add_action('login_form_lostpassword', [__CLASS__, 'maybe_accept_unknown_lost_password_request'], 0);
+        add_action('login_form_retrievepassword', [__CLASS__, 'maybe_accept_unknown_lost_password_request'], 0);
+        add_filter('login_errors', [__CLASS__, 'generic_login_errors']);
         add_filter('authenticate', [__CLASS__, 'rate_limit_wordpress_login'], 5, 3);
         add_action('wp_login_failed', [__CLASS__, 'record_wordpress_login_failure'], 10, 2);
         add_action('lostpassword_post', [__CLASS__, 'rate_limit_lost_password_request'], 10, 2);
@@ -94,6 +97,70 @@ final class ABiT_SaaS_Auth_API
         }
 
         return $options;
+    }
+
+    public static function maybe_accept_unknown_lost_password_request(): void
+    {
+        if ('POST' !== strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? ''))) {
+            return;
+        }
+
+        $identifier = isset($_POST['user_login']) && is_string($_POST['user_login'])
+            ? trim((string) wp_unslash($_POST['user_login']))
+            : '';
+        if ($identifier === '') {
+            return;
+        }
+
+        $user = self::user_for_login_identifier(strtolower($identifier));
+        if ($user instanceof WP_User) {
+            return;
+        }
+
+        self::maybe_install_schema();
+        $limited = self::check_auth_rate_limit('forgot_password', strtolower($identifier), 0);
+        if (!empty($limited['limited'])) {
+            self::record_auth_rate_limit_event('forgot_password', 'throttled_unknown', strtolower($identifier), 0, null, null, (int) $limited['retry_after']);
+            self::audit_auth_rate_limit('forgot_password', 'password_reset_request', (int) $limited['retry_after'], 0);
+            self::redirect_to_lost_password_confirmation();
+        }
+
+        self::record_auth_rate_limit_event('forgot_password', 'accepted_unknown', strtolower($identifier), 0);
+        self::audit_event(
+            'auth_password_reset_requested',
+            [
+                'actor_type' => 'anonymous',
+                'entity_type' => 'auth',
+                'event_data' => [
+                    'reset_request_result' => 'accepted_generic_response',
+                    'email_domain_hash' => self::email_domain_hash($identifier),
+                    'reset_delivery_channel' => 'email',
+                    'reset_token_created' => false,
+                    'password_reset_flow_version' => 'wordpress_native_v1',
+                ],
+            ]
+        );
+
+        self::redirect_to_lost_password_confirmation();
+    }
+
+    public static function generic_login_errors(string $errors): string
+    {
+        $action = isset($_REQUEST['action']) ? sanitize_key((string) wp_unslash($_REQUEST['action'])) : 'login';
+        if (!in_array($action, ['login', ''], true)) {
+            return $errors;
+        }
+
+        return '<p>' . esc_html__('We could not sign you in with those details. Check your email and password, then try again.', 'abit-saas-auth') . '</p>';
+    }
+
+    private static function redirect_to_lost_password_confirmation(): void
+    {
+        $redirect_to = !empty($_REQUEST['redirect_to']) && is_string($_REQUEST['redirect_to'])
+            ? (string) wp_unslash($_REQUEST['redirect_to'])
+            : 'wp-login.php?checkemail=confirm';
+        wp_safe_redirect($redirect_to);
+        exit;
     }
 
     public static function validate_password_reset_policy(WP_Error $errors, WP_User $user): void
@@ -1780,7 +1847,9 @@ final class ABiT_SaaS_Auth_API
         $data = $validated['data'];
         $duplicate_errors = self::duplicate_email_errors($data['business_email']);
         if (!empty($duplicate_errors)) {
-            return self::field_error_response($duplicate_errors, 409);
+            self::audit_duplicate_signup_suppressed($data['business_email']);
+
+            return self::registration_accepted_response();
         }
 
         global $wpdb;
@@ -1795,6 +1864,11 @@ final class ABiT_SaaS_Auth_API
             $user_id = self::create_user($data);
             if (is_wp_error($user_id)) {
                 $wpdb->query('ROLLBACK');
+                if (self::is_duplicate_user_email_error($user_id)) {
+                    self::audit_duplicate_signup_suppressed($data['business_email']);
+                    return self::registration_accepted_response();
+                }
+
                 return self::field_error_response(self::user_error_to_field_errors($user_id), 409);
             }
 
@@ -1876,18 +1950,7 @@ final class ABiT_SaaS_Auth_API
             );
             $wpdb->query('COMMIT');
 
-            return new WP_REST_Response(
-                [
-                    'user_id' => $user_id,
-                    'company_id' => $company_id,
-                    'access_request_id' => $access_request_id,
-                    'consent_audit_record_id' => $consent_id,
-                    'email_verification_token_id' => $token_id,
-                    'status' => self::REVIEW_STATUS_PENDING_EMAIL,
-                    'verification_email_sent' => true,
-                ],
-                201
-            );
+            return self::registration_accepted_response();
         } catch (Throwable $exception) {
             $wpdb->query('ROLLBACK');
 
@@ -3298,6 +3361,17 @@ final class ABiT_SaaS_Auth_API
                 'code' => 'invalid_login',
             ],
             401
+        );
+    }
+
+    private static function registration_accepted_response(): WP_REST_Response
+    {
+        return new WP_REST_Response(
+            [
+                'message' => 'If this email is eligible, verification instructions will be sent to that address.',
+                'status' => 'accepted',
+            ],
+            202
         );
     }
 
@@ -4800,6 +4874,27 @@ final class ABiT_SaaS_Auth_API
         );
 
         return $exists ? ['business_email' => 'An access request already exists for this email address.'] : [];
+    }
+
+    private static function audit_duplicate_signup_suppressed(string $email): void
+    {
+        self::audit_event(
+            'auth_signup_duplicate_suppressed',
+            [
+                'actor_type' => 'anonymous',
+                'entity_type' => 'access_request',
+                'event_data' => [
+                    'email_domain_hash' => self::email_domain_hash($email),
+                    'signup_flow_version' => 'api_v1',
+                    'response' => 'accepted_generic_response',
+                ],
+            ]
+        );
+    }
+
+    private static function is_duplicate_user_email_error(WP_Error $error): bool
+    {
+        return in_array($error->get_error_code(), ['existing_user_email', 'email_exists'], true);
     }
 
     private static function create_user(array $data)

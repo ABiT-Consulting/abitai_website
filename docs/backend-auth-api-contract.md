@@ -34,7 +34,7 @@ Session handling:
 
 | Method | Pretty path | REST path | Auth | Purpose |
 | --- | --- | --- | --- | --- |
-| POST | `/api/auth/register` | `/wp-json/abit-ai/v1/auth/register` | Public | Create a SaaS access request, WordPress user, consent audit record, and email verification token. |
+| POST | `/api/auth/register` | `/wp-json/abit-ai/v1/auth/register` | Public | Accept a SaaS access request and send verification instructions when the email is eligible. |
 | POST | `/api/auth/resend-verification` | `/wp-json/abit-ai/v1/auth/resend-verification` | Public | Resend an email verification link for an eligible pending request with cooldown, rate limit, and token supersession. |
 | POST | `/api/auth/login` | `/wp-json/abit-ai/v1/auth/login` | Public | Authenticate credentials and return status-aware routing state. |
 | POST | `/api/auth/logout` | `/wp-json/abit-ai/v1/auth/logout` | Optional session | Revoke current session token when present. |
@@ -136,7 +136,6 @@ Non-validation errors use this shape:
 | 401 | `invalid_login` | Login with invalid credentials. | Show generic sign-in error; do not reveal whether account exists. |
 | 401 | `not_authenticated` | Auth-required endpoint without active session. | Clear local auth state and route to sign-in. |
 | 401 | none | Logout with no active session. | Treat as signed out; response has `authenticated: false`. |
-| 409 | `validation_failed` | Duplicate registration email or WordPress user creation conflict. | Show duplicate-safe email field error. |
 | 422 | `validation_failed` | Invalid registration or login payload. | Show inline field errors. |
 | 422 | `provisioning_not_allowed` | Provisioning requested before onboarding/company requirements are met. | Keep user on current gate and display missing requirements if useful. |
 | 422 | `workspace_slug_reserved` or `workspace_slug_taken` | Workspace slug validation. | Reject the entered slug and offer `suggested_slug`. |
@@ -150,7 +149,7 @@ Pretty routes return `405` with `{ "message": "Method not allowed." }` when call
 
 ## POST /api/auth/register
 
-Creates the user identity, company draft, access request, consent audit record, and a verification email token.
+Accepts the signup request. When the submitted email is eligible and not already present, the backend creates the user identity, company draft, access request, consent audit record, and verification email token. Duplicate emails receive the same neutral accepted response so the API does not disclose whether an account or access request already exists.
 
 Request:
 
@@ -183,17 +182,12 @@ Validation:
 | `password` | 12-128 characters; at least three character classes; rejects common examples. |
 | `terms_privacy_acceptance` | Must be boolean true. |
 
-Success response, `201`:
+Accepted response, `202`:
 
 ```json
 {
-  "user_id": 123,
-  "company_id": 456,
-  "access_request_id": 789,
-  "consent_audit_record_id": 101,
-  "email_verification_token_id": 202,
-  "status": "pending_email_verification",
-  "verification_email_sent": true
+  "message": "If this email is eligible, verification instructions will be sent to that address.",
+  "status": "accepted"
 }
 ```
 
@@ -212,15 +206,12 @@ Mock validation response, `422`:
 }
 ```
 
-Mock duplicate response, `409`:
+Duplicate email response, `202`:
 
 ```json
 {
-  "message": "Please correct the highlighted fields.",
-  "code": "validation_failed",
-  "field_errors": {
-    "business_email": "An access request already exists for this email address."
-  }
+  "message": "If this email is eligible, verification instructions will be sent to that address.",
+  "status": "accepted"
 }
 ```
 
@@ -738,9 +729,9 @@ Build mocks around these scenarios before live API integration:
 
 | Scenario | Primary endpoint | Mock status | Expected frontend route |
 | --- | --- | --- | --- |
-| New registration accepted | `POST /api/auth/register` | `201` | Verify-email prompt. |
+| New registration accepted | `POST /api/auth/register` | `202` | Verify-email prompt. |
 | Registration field errors | `POST /api/auth/register` | `422` | Signup form with inline errors. |
-| Duplicate access request | `POST /api/auth/register` | `409` | Duplicate-safe sign-in/check-email state. |
+| Duplicate access request | `POST /api/auth/register` | `202` | Same verify-email/check-email prompt as a new accepted request. |
 | Verification resend accepted or limited | `POST /api/auth/resend-verification` | `202` or `429` | Verify-email prompt with sent or cooldown message. |
 | Login invalid credentials | `POST /api/auth/login` | `401` | Sign-in form with generic error. |
 | Login unverified | `POST /api/auth/login` | `200`, `route: "verify_email"` | `/auth/verify`. |
