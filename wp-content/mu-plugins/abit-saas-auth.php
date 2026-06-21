@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-21.02';
+    private const SCHEMA_VERSION = '2026-06-21.03';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -28,6 +28,7 @@ final class ABiT_SaaS_Auth_API
     private const WORKSPACE_MEMBER_STATUS_ACTIVE = 'active';
     private const WORKSPACE_MEMBER_ROLE_OWNER = 'owner';
     private const WORKSPACE_MEMBER_ROLE_MEMBER = 'member';
+    private const CONSENT_CAPTURE_SOURCE_SIGNUP = 'signup_onboarding';
     private const CONSENT_RETENTION_RULE = 'active_plus_7_years_after_closure';
     private const HIGH_RESEND_SENT_THRESHOLD = 4;
     private const HIGH_RESEND_THROTTLED_THRESHOLD = 2;
@@ -724,6 +725,10 @@ final class ABiT_SaaS_Auth_API
             ]
         );
         self::render_signup_profile_panel(
+            'Consent Evidence',
+            self::signup_review_consent_evidence_rows($access_request, $consent)
+        );
+        self::render_signup_profile_panel(
             'Provisioning Readiness',
             [
                 'Eligible' => is_array($provisioning) && !empty($provisioning['eligible']) ? 'Yes' : 'No',
@@ -766,13 +771,42 @@ final class ABiT_SaaS_Auth_API
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT id, access_request_id, user_id, terms_version, privacy_version, consent_text_version, legal_locale, accepted_at, hash_key_version, capture_source, retention_rule, created_at FROM ' . self::table('consent_audit_records') . ' WHERE access_request_id = %d ORDER BY accepted_at DESC, id DESC LIMIT 1',
+                'SELECT id, access_request_id, user_id, business_email_hash, terms_version, privacy_version, consent_text_version, legal_locale, accepted_at, ip_hash, user_agent_hash, hash_key_version, capture_source, retention_rule, created_at FROM ' . self::table('consent_audit_records') . ' WHERE access_request_id = %d ORDER BY accepted_at DESC, id DESC LIMIT 1',
                 $access_request_id
             ),
             ARRAY_A
         );
 
         return is_array($row) ? $row : null;
+    }
+
+    private static function signup_review_consent_evidence_rows(array $access_request, ?array $consent): array
+    {
+        if (!is_array($consent)) {
+            return [
+                'Consent status' => 'Missing consent audit record',
+                'Access request accepted at' => self::nullable_datetime($access_request['terms_privacy_accepted_at'] ?? null),
+                'Access request terms version' => self::nullable_key($access_request['terms_version'] ?? null),
+                'Access request privacy version' => self::nullable_key($access_request['privacy_version'] ?? null),
+                'Latest consent audit ID' => (int) ($access_request['latest_consent_audit_record_id'] ?? 0) > 0 ? '#' . (int) $access_request['latest_consent_audit_record_id'] : '',
+            ];
+        }
+
+        return [
+            'Consent status' => 'Captured',
+            'Audit record' => '#' . (int) $consent['id'],
+            'Accepted at' => self::nullable_datetime($consent['accepted_at'] ?? null),
+            'Terms version' => (string) ($consent['terms_version'] ?? ''),
+            'Privacy version' => (string) ($consent['privacy_version'] ?? ''),
+            'Consent text version' => (string) ($consent['consent_text_version'] ?? ''),
+            'Legal locale' => (string) ($consent['legal_locale'] ?? ''),
+            'Capture source' => self::signup_review_label((string) ($consent['capture_source'] ?? '')),
+            'Email hash' => self::redacted_hash((string) ($consent['business_email_hash'] ?? '')),
+            'IP hash' => self::redacted_hash((string) ($consent['ip_hash'] ?? '')),
+            'User-agent hash' => self::redacted_hash((string) ($consent['user_agent_hash'] ?? '')),
+            'Hash key version' => (string) ($consent['hash_key_version'] ?? ''),
+            'Retention rule' => self::consent_retention_policy_label((string) ($consent['retention_rule'] ?? '')),
+        ];
     }
 
     private static function signup_review_email_events(int $access_request_id): array
@@ -1325,6 +1359,8 @@ final class ABiT_SaaS_Auth_API
             'reports_analytics' => 'Reports and analytics',
             'full_erp_evaluation' => 'Full ERP evaluation',
             'not_sure' => 'Not sure',
+            self::CONSENT_CAPTURE_SOURCE_SIGNUP => 'Signup onboarding',
+            self::CONSENT_RETENTION_RULE => 'Retain while active, then 7 years after rejection, closure, or last activity unless legal hold applies',
         ];
 
         if ($value === '') {
@@ -1952,7 +1988,7 @@ final class ABiT_SaaS_Auth_API
                     'event_data' => [
                         'email' => $data['business_email'],
                         'consent_audit_record_id' => $consent_id,
-                        'capture_source' => 'signup_registration',
+                        'capture_source' => self::CONSENT_CAPTURE_SOURCE_SIGNUP,
                     ],
                 ]
             );
@@ -5282,7 +5318,7 @@ final class ABiT_SaaS_Auth_API
                 'ip_hash' => self::hmac(self::request_ip()),
                 'user_agent_hash' => self::hmac($_SERVER['HTTP_USER_AGENT'] ?? ''),
                 'hash_key_version' => self::hash_key_version(),
-                'capture_source' => 'signup_registration',
+                'capture_source' => self::CONSENT_CAPTURE_SOURCE_SIGNUP,
                 'retention_rule' => self::CONSENT_RETENTION_RULE,
                 'created_at' => $now,
             ],
@@ -5822,6 +5858,29 @@ final class ABiT_SaaS_Auth_API
     private static function hmac(string $value): string
     {
         return hash_hmac('sha256', $value, self::hash_key());
+    }
+
+    private static function redacted_hash(string $hash): string
+    {
+        $hash = trim($hash);
+        if ($hash === '') {
+            return '';
+        }
+
+        if (strlen($hash) <= 16) {
+            return substr($hash, 0, 4) . '...';
+        }
+
+        return substr($hash, 0, 8) . '...' . substr($hash, -8);
+    }
+
+    private static function consent_retention_policy_label(string $rule): string
+    {
+        if ($rule === self::CONSENT_RETENTION_RULE) {
+            return self::signup_review_label($rule);
+        }
+
+        return $rule;
     }
 
     private static function hash_key(): string
