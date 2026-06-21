@@ -46,6 +46,12 @@ This checklist records required keys, owners, expected non-secret shape, and ver
 | SMTP transport | `ABIT_TRANSACTIONAL_SMTP_AUTH` | Conditional | Required when SMTP host is set; usually `true`. |
 | SMTP transport | `ABIT_TRANSACTIONAL_SMTP_USERNAME` | Conditional secret | Required when SMTP auth is enabled; value redacted. |
 | SMTP transport | `ABIT_TRANSACTIONAL_SMTP_PASSWORD` | Conditional secret | Required when SMTP auth is enabled; value redacted. |
+| Launch flag | `ABIT_SAAS_AUTH_LAUNCH_ENABLED` | Required launch decision | Set `true` only when the active beta or public rollout stage is approved. |
+| Launch stage | `ABIT_SAAS_AUTH_ROLLOUT_STAGE` | Required launch decision | One of `internal_beta`, `customer_beta`, or `public`; begin with `internal_beta`. |
+| Internal beta | `ABIT_SAAS_AUTH_INTERNAL_BETA_EMAILS` | Optional restricted list | Optional internal email allowlist; keep values in production configuration only. |
+| Internal beta | `ABIT_SAAS_AUTH_INTERNAL_BETA_DOMAINS` | Required restricted list | Defaults to `abit.ai`; confirm the internal beta cohort can complete signup-to-onboarding. |
+| Customer beta | `ABIT_SAAS_AUTH_CUSTOMER_BETA_EMAILS` | Optional restricted list | Selected customer email allowlist; values redacted from repository evidence. |
+| Customer beta | `ABIT_SAAS_AUTH_CUSTOMER_BETA_DOMAINS` | Optional restricted list | Selected customer domain allowlist; values redacted from repository evidence. |
 | Provisioning capacity | `ABIT_SAAS_PROVISIONING_CAPACITY_READY` | Required launch decision | Set `true` only after operations can process MVP provisioning requests; otherwise keep `false` and use admin readiness overrides for controlled accounts. |
 | Deploy automation | `CPANEL_HOST`, `CPANEL_USER`, `CPANEL_TOKEN`, `CPANEL_REPO_ROOT` | Required secret/config | Configured in GitHub Actions secrets; values redacted. |
 | Deploy automation | `CPANEL_PORT`, `CPANEL_BRANCH`, `CPANEL_INSECURE` | Optional | Use only when production deployment needs non-default cPanel behavior. |
@@ -119,6 +125,7 @@ Production edge/WAF requirements:
 | Signup risk | Signup hold/challenge rates are checked daily during launch week. |
 | Admin decisions | Approval, more-information, rejection, readiness override, and provisioning request events are monitored for unexpected failures. |
 | Synthetic smoke | At least one production smoke run covers signup, verification, login, password reset, admin approval, and provisioning gate state before broad traffic. |
+| Launch rollout | Monitor `auth_signup_rollout_blocked`, beta allowlist changes, and `gate.launch_rollout` responses during internal and selected customer beta. |
 
 ## Launch Acceptance Record
 

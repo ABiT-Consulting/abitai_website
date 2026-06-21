@@ -42,6 +42,10 @@ final class ABiT_SaaS_Auth_API
     private const SESSION_IDLE_SECONDS = 43200;
     private const SESSION_REMEMBER_SECONDS = 604800;
     private const AUTH_COOKIE_SAMESITE = 'Lax';
+    private const LAUNCH_STAGE_DISABLED = 'disabled';
+    private const LAUNCH_STAGE_INTERNAL_BETA = 'internal_beta';
+    private const LAUNCH_STAGE_CUSTOMER_BETA = 'customer_beta';
+    private const LAUNCH_STAGE_PUBLIC = 'public';
 
     public static function bootstrap(): void
     {
@@ -2037,6 +2041,13 @@ final class ABiT_SaaS_Auth_API
         }
 
         $data = $validated['data'];
+        $rollout_access = self::signup_rollout_access($data['business_email']);
+        if (empty($rollout_access['allowed'])) {
+            self::audit_signup_rollout_blocked($data['business_email'], $rollout_access);
+
+            return self::rollout_not_available_response($rollout_access);
+        }
+
         $duplicate_errors = self::duplicate_email_errors($data['business_email']);
         if (!empty($duplicate_errors)) {
             self::audit_duplicate_signup_suppressed($data['business_email']);
@@ -2278,6 +2289,7 @@ final class ABiT_SaaS_Auth_API
             ]
         );
         self::record_auth_rate_limit_event('login', 'succeeded', $email, (int) $user->ID, $account_state['access_request_id'], $account_state['company_id']);
+        $rollout_access = self::product_access_rollout_access($user, $access_request);
 
         return new WP_REST_Response(
             [
@@ -2290,6 +2302,7 @@ final class ABiT_SaaS_Auth_API
                 'state' => $account_state['state'],
                 'route' => $account_state['route'],
                 'email_verified' => $account_state['email_verified'],
+                'launch_rollout' => self::public_rollout_payload($rollout_access),
                 'nonce' => wp_create_nonce('wp_rest'),
             ],
             200
@@ -2689,6 +2702,7 @@ final class ABiT_SaaS_Auth_API
         $onboarding = self::onboarding_payload($user, $access_request, $account_state);
         $provisioning = self::provisioning_payload($user, $access_request, $account_state, $onboarding);
         $workspace = self::workspace_payload($user, $access_request);
+        $rollout_access = self::product_access_rollout_access($user, $access_request);
 
         return new WP_REST_Response(
             [
@@ -2715,8 +2729,9 @@ final class ABiT_SaaS_Auth_API
                     'state' => $account_state['state'],
                     'route' => $account_state['route'],
                     'next_path' => self::path_for_review_status($account_state['review_status'], $account_state['locked']),
-                    'product_access' => !$account_state['locked'] && $account_state['review_status'] === self::REVIEW_STATUS_APPROVED,
+                    'product_access' => !$account_state['locked'] && $account_state['review_status'] === self::REVIEW_STATUS_APPROVED && !empty($rollout_access['allowed']),
                     'locked' => $account_state['locked'],
+                    'launch_rollout' => self::public_rollout_payload($rollout_access),
                 ],
             ],
             200
@@ -4930,6 +4945,10 @@ final class ABiT_SaaS_Auth_API
             $missing[] = 'request_not_rejected';
         }
 
+        if (empty(self::product_access_rollout_access($user, $access_request)['allowed'])) {
+            $missing[] = 'launch_rollout';
+        }
+
         $missing = array_values(array_unique($missing));
         if (empty($missing)) {
             return [
@@ -5902,6 +5921,172 @@ final class ABiT_SaaS_Auth_API
                 $access_request_id
             )
         );
+    }
+
+    private static function signup_rollout_access(string $email): array
+    {
+        return self::rollout_access_for_email($email, 'signup');
+    }
+
+    private static function product_access_rollout_access(WP_User $user, ?array $access_request): array
+    {
+        $email = self::first_non_empty([
+            $access_request['business_email'] ?? null,
+            $user->user_email,
+        ]);
+
+        return self::rollout_access_for_email($email, 'product_access');
+    }
+
+    private static function rollout_access_for_email(string $email, string $surface): array
+    {
+        $config = self::launch_rollout_config();
+        $email = strtolower(trim($email));
+        $domain = self::email_domain($email);
+        $allowed = false;
+        $reason = 'launch_disabled';
+
+        if (!$config['enabled']) {
+            $reason = 'launch_disabled';
+        } elseif ($config['stage'] === self::LAUNCH_STAGE_PUBLIC) {
+            $allowed = true;
+            $reason = 'public_rollout';
+        } elseif ($email !== '' && in_array($email, $config['allowed_emails'], true)) {
+            $allowed = true;
+            $reason = 'email_allowlist';
+        } elseif ($domain !== '' && in_array($domain, $config['allowed_domains'], true)) {
+            $allowed = true;
+            $reason = 'domain_allowlist';
+        } else {
+            $reason = $config['stage'] . '_not_eligible';
+        }
+
+        return [
+            'allowed' => $allowed,
+            'enabled' => $config['enabled'],
+            'stage' => $config['stage'],
+            'surface' => sanitize_key($surface),
+            'reason' => $reason,
+            'email_domain_hash' => $domain === '' ? '' : self::hmac($domain),
+            'allowed_email_count' => count($config['allowed_emails']),
+            'allowed_domain_count' => count($config['allowed_domains']),
+        ];
+    }
+
+    private static function launch_rollout_config(): array
+    {
+        $enabled = self::truthy_env_value('ABIT_SAAS_AUTH_LAUNCH_ENABLED');
+        $stage = sanitize_key(self::env_value('ABIT_SAAS_AUTH_ROLLOUT_STAGE') ?: self::LAUNCH_STAGE_INTERNAL_BETA);
+        if (!$enabled) {
+            $stage = self::LAUNCH_STAGE_DISABLED;
+        } elseif (!in_array($stage, self::launch_stage_options(), true)) {
+            $stage = self::LAUNCH_STAGE_INTERNAL_BETA;
+        }
+
+        $internal_domains = self::csv_env_values('ABIT_SAAS_AUTH_INTERNAL_BETA_DOMAINS');
+        if (empty($internal_domains)) {
+            $internal_domains = ['abit.ai'];
+        }
+
+        $internal_emails = self::csv_env_values('ABIT_SAAS_AUTH_INTERNAL_BETA_EMAILS');
+        $customer_emails = self::csv_env_values('ABIT_SAAS_AUTH_CUSTOMER_BETA_EMAILS');
+        $customer_domains = self::csv_env_values('ABIT_SAAS_AUTH_CUSTOMER_BETA_DOMAINS');
+
+        $allowed_emails = [];
+        $allowed_domains = [];
+        if ($stage === self::LAUNCH_STAGE_INTERNAL_BETA) {
+            $allowed_emails = $internal_emails;
+            $allowed_domains = $internal_domains;
+        } elseif ($stage === self::LAUNCH_STAGE_CUSTOMER_BETA) {
+            $allowed_emails = array_merge($internal_emails, $customer_emails);
+            $allowed_domains = array_merge($internal_domains, $customer_domains);
+        }
+
+        return apply_filters(
+            'abit_saas_auth_launch_rollout_config',
+            [
+                'enabled' => $enabled,
+                'stage' => $stage,
+                'allowed_emails' => array_values(array_unique(array_filter(array_map('sanitize_email', $allowed_emails)))),
+                'allowed_domains' => array_values(array_unique(array_filter(array_map([__CLASS__, 'clean_rollout_domain'], $allowed_domains)))),
+            ]
+        );
+    }
+
+    private static function launch_stage_options(): array
+    {
+        return [
+            self::LAUNCH_STAGE_INTERNAL_BETA,
+            self::LAUNCH_STAGE_CUSTOMER_BETA,
+            self::LAUNCH_STAGE_PUBLIC,
+        ];
+    }
+
+    private static function public_rollout_payload(array $rollout_access): array
+    {
+        return [
+            'enabled' => !empty($rollout_access['enabled']),
+            'stage' => sanitize_key((string) ($rollout_access['stage'] ?? self::LAUNCH_STAGE_DISABLED)),
+            'allowed' => !empty($rollout_access['allowed']),
+            'reason' => sanitize_key((string) ($rollout_access['reason'] ?? 'unknown')),
+        ];
+    }
+
+    private static function rollout_not_available_response(array $rollout_access): WP_REST_Response
+    {
+        $enabled = !empty($rollout_access['enabled']);
+        $status = $enabled ? 403 : 503;
+
+        return new WP_REST_Response(
+            [
+                'message' => $enabled
+                    ? 'abit.ai access is currently limited to the active beta group.'
+                    : 'abit.ai access requests are not open yet.',
+                'code' => 'launch_rollout_not_available',
+                'launch_rollout' => self::public_rollout_payload($rollout_access),
+            ],
+            $status
+        );
+    }
+
+    private static function audit_signup_rollout_blocked(string $email, array $rollout_access): void
+    {
+        self::audit_event(
+            'auth_signup_rollout_blocked',
+            [
+                'actor_type' => 'anonymous',
+                'entity_type' => 'access_request',
+                'event_data' => [
+                    'rollout_stage' => sanitize_key((string) ($rollout_access['stage'] ?? self::LAUNCH_STAGE_DISABLED)),
+                    'rollout_surface' => sanitize_key((string) ($rollout_access['surface'] ?? 'signup')),
+                    'rollout_reason' => sanitize_key((string) ($rollout_access['reason'] ?? 'unknown')),
+                    'email_domain_hash' => self::email_domain_hash($email),
+                ],
+            ]
+        );
+    }
+
+    private static function truthy_env_value(string $name): bool
+    {
+        $value = strtolower(self::env_value($name));
+        return in_array($value, ['1', 'true', 'yes', 'on'], true);
+    }
+
+    private static function csv_env_values(string $name): array
+    {
+        $raw = self::env_value($name);
+        if ($raw === '') {
+            return [];
+        }
+
+        $parts = preg_split('/[\s,;]+/', strtolower($raw));
+        return array_values(array_filter(array_map('trim', is_array($parts) ? $parts : [])));
+    }
+
+    private static function clean_rollout_domain(string $domain): string
+    {
+        $domain = strtolower(trim($domain, " \t\n\r\0\x0B.@"));
+        return preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/', $domain) ? $domain : '';
     }
 
     private static function record_failed_login_attempt(string $email): void

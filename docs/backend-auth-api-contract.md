@@ -32,6 +32,7 @@ Session handling:
 - Unsafe authenticated requests, including logout, provisioning, workspace slug validation, and admin decision endpoints, must include the current `X-WP-Nonce` value. Missing or invalid nonces return `403` with `code: "csrf_check_failed"`.
 - Cross-origin browser requests are limited to the WordPress allowed-origin list. Disallowed origins return `403` with `code: "cors_origin_denied"` and receive no credentialed CORS grant.
 - Auth cookies are issued with bounded lifetimes, `Secure`, `HttpOnly`, and `SameSite=Lax`; password reset revokes all existing sessions for that user.
+- Launch exposure is controlled server-side by `ABIT_SAAS_AUTH_LAUNCH_ENABLED` and `ABIT_SAAS_AUTH_ROLLOUT_STAGE`. The configured stages are `internal_beta`, `customer_beta`, and `public`.
 
 ## Endpoint Summary
 
@@ -60,6 +61,8 @@ Session handling:
 | Any locked account | `account_locked` | `locked` | `/auth/sign-in` | No |
 
 Locked accounts are identified by non-zero WordPress `user_status` or truthy user meta keys `abit_saas_account_locked`, `abit_saas_security_hold`, or `account_locked`.
+
+Product access also requires `gate.launch_rollout.allowed=true`. During disabled, internal beta, and selected customer beta stages, approved users outside the configured allowlists remain blocked from product access.
 
 ## Onboarding Statuses
 
@@ -91,6 +94,7 @@ Provisioning is manual/deferred for MVP, but the frontend can show request statu
 | `consent` | Current consent evidence is present: accepted timestamp, terms version, privacy version, and latest consent audit record ID. |
 | `admin_approval` | `review_status` is `approved_for_mvp_access`. |
 | `capacity_readiness` | Provisioning capacity is enabled by `ABIT_SAAS_PROVISIONING_CAPACITY_READY`, the `abit_saas_provisioning_capacity_ready` WordPress option, or the `abit_saas_auth_provisioning_capacity_ready` filter. |
+| `launch_rollout` | Launch flag is enabled and the user is eligible for the configured rollout stage. |
 
 `provisioning.missing_requirements` can contain:
 
@@ -106,7 +110,23 @@ Provisioning is manual/deferred for MVP, but the frontend can show request statu
 | `consent_audit` | Consent acceptance evidence or the consent audit record link is incomplete. |
 | `admin_approval` | The access request has not been approved for MVP access. |
 | `capacity_readiness` | Operational capacity has not been marked ready for provisioning. |
+| `launch_rollout` | Launch rollout is disabled or the user is outside the current internal/customer beta cohort. |
 | `request_not_rejected` | Access request has been rejected. |
+
+## Launch Rollout Envelope
+
+`POST /api/auth/register` is gated before account creation. If the launch flag is disabled or the email is outside the active beta cohort, the response uses `code: "launch_rollout_not_available"` with HTTP `503` when disabled and HTTP `403` when the stage is enabled but restricted.
+
+`POST /api/auth/login` includes `launch_rollout`, and `GET /api/auth/me` includes the same object under `gate.launch_rollout`:
+
+```json
+{
+  "enabled": true,
+  "stage": "internal_beta",
+  "allowed": true,
+  "reason": "domain_allowlist"
+}
+```
 
 ## Error Envelope
 
