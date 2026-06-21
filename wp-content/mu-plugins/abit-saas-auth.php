@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-14.11';
+    private const SCHEMA_VERSION = '2026-06-21.01';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -34,6 +34,7 @@ final class ABiT_SaaS_Auth_API
     private const HIGH_FAILED_LOGIN_THRESHOLD = 5;
     private const SHARED_IP_REQUEST_THRESHOLD = 3;
     private const SHARED_DOMAIN_REQUEST_THRESHOLD = 3;
+    private const AUTH_LOCKOUT_META_KEY = 'abit_saas_auth_locked_until';
 
     public static function bootstrap(): void
     {
@@ -47,6 +48,9 @@ final class ABiT_SaaS_Auth_API
         add_filter('retrieve_password_message', [__CLASS__, 'password_reset_message'], 10, 4);
         add_filter('wp_hash_password_algorithm', [__CLASS__, 'password_hash_algorithm'], 10, 1);
         add_filter('wp_hash_password_options', [__CLASS__, 'password_hash_options'], 10, 2);
+        add_filter('authenticate', [__CLASS__, 'rate_limit_wordpress_login'], 5, 3);
+        add_action('wp_login_failed', [__CLASS__, 'record_wordpress_login_failure'], 10, 2);
+        add_action('lostpassword_post', [__CLASS__, 'rate_limit_lost_password_request'], 10, 2);
         add_action('validate_password_reset', [__CLASS__, 'validate_password_reset_policy'], 10, 2);
         add_action('user_profile_update_errors', [__CLASS__, 'validate_user_profile_password_policy'], 10, 3);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
@@ -94,6 +98,18 @@ final class ABiT_SaaS_Auth_API
 
     public static function validate_password_reset_policy(WP_Error $errors, WP_User $user): void
     {
+        self::maybe_install_schema();
+
+        $limited = self::check_auth_rate_limit('reset_password', (string) $user->user_email, (int) $user->ID);
+        if (!empty($limited['limited'])) {
+            self::record_auth_rate_limit_event('reset_password', 'throttled', (string) $user->user_email, (int) $user->ID, null, null, (int) $limited['retry_after']);
+            self::audit_auth_rate_limit('reset_password', 'password_reset_submit', (int) $limited['retry_after'], (int) $user->ID);
+            $errors->add('abit_saas_auth_rate_limited', self::rate_limited_message((int) $limited['retry_after']));
+            return;
+        }
+
+        self::record_auth_rate_limit_event('reset_password', 'allowed', (string) $user->user_email, (int) $user->ID);
+
         $password = isset($_POST['pass1']) ? (string) wp_unslash($_POST['pass1']) : '';
         if ($password === '') {
             return;
@@ -103,6 +119,81 @@ final class ABiT_SaaS_Auth_API
         if ($password_error) {
             $errors->add('abit_saas_password_policy', $password_error);
         }
+    }
+
+    public static function rate_limit_wordpress_login($user, string $username, string $password)
+    {
+        if ($user instanceof WP_User || is_wp_error($user)) {
+            return $user;
+        }
+
+        $identifier = strtolower(trim($username));
+        if ($identifier === '' || trim($password) === '') {
+            return $user;
+        }
+
+        self::maybe_install_schema();
+
+        $matched_user = self::user_for_login_identifier($identifier);
+        if ($matched_user instanceof WP_User && self::is_user_locked($matched_user)) {
+            return new WP_Error('account_locked', __('This account cannot sign in right now. Contact support for help.', 'abit-saas-auth'));
+        }
+
+        $limited = self::check_auth_rate_limit('login', $identifier, $matched_user instanceof WP_User ? (int) $matched_user->ID : 0);
+        if (!empty($limited['limited'])) {
+            $user_id = $matched_user instanceof WP_User ? (int) $matched_user->ID : 0;
+            self::record_auth_rate_limit_event('login', 'throttled', $identifier, $user_id, null, null, (int) $limited['retry_after']);
+            self::audit_auth_rate_limit('login', 'wordpress_login', (int) $limited['retry_after'], $user_id);
+
+            return new WP_Error('rate_limited', self::rate_limited_message((int) $limited['retry_after']));
+        }
+
+        self::record_auth_rate_limit_event('login', 'allowed', $identifier, $matched_user instanceof WP_User ? (int) $matched_user->ID : 0);
+        return $user;
+    }
+
+    public static function record_wordpress_login_failure(string $username, WP_Error $error): void
+    {
+        $code = $error->get_error_code();
+        if (in_array($code, ['rate_limited', 'account_locked', 'empty_username', 'empty_password'], true)) {
+            return;
+        }
+
+        self::maybe_install_schema();
+
+        $identifier = strtolower(trim($username));
+        $user = self::user_for_login_identifier($identifier);
+        $user_id = $user instanceof WP_User ? (int) $user->ID : 0;
+        $access_request = $user instanceof WP_User ? self::access_request_for_user($user) : self::access_request_for_email($identifier);
+        $access_request_id = is_array($access_request) ? (int) $access_request['id'] : null;
+        $company_id = is_array($access_request) ? (int) $access_request['company_id'] : null;
+
+        self::record_failed_login_attempt($identifier);
+        self::record_auth_rate_limit_event('login_failed', 'failed', $identifier, $user_id, $access_request_id, $company_id);
+        if ($user instanceof WP_User) {
+            self::maybe_lock_user_after_failed_login($user, $identifier, $access_request);
+        }
+    }
+
+    public static function rate_limit_lost_password_request(WP_Error $errors, $user_data = null): void
+    {
+        self::maybe_install_schema();
+
+        $identifier = isset($_POST['user_login']) ? strtolower(trim((string) wp_unslash($_POST['user_login']))) : '';
+        $user_id = $user_data instanceof WP_User ? (int) $user_data->ID : 0;
+        if ($identifier === '' && $user_data instanceof WP_User) {
+            $identifier = (string) $user_data->user_email;
+        }
+
+        $limited = self::check_auth_rate_limit('forgot_password', $identifier, $user_id);
+        if (!empty($limited['limited'])) {
+            self::record_auth_rate_limit_event('forgot_password', 'throttled', $identifier, $user_id, null, null, (int) $limited['retry_after']);
+            self::audit_auth_rate_limit('forgot_password', 'password_reset_request', (int) $limited['retry_after'], $user_id);
+            $errors->add('abit_saas_auth_rate_limited', self::rate_limited_message((int) $limited['retry_after']));
+            return;
+        }
+
+        self::record_auth_rate_limit_event('forgot_password', 'allowed', $identifier, $user_id);
     }
 
     public static function validate_user_profile_password_policy(WP_Error $errors, bool $update, $user): void
@@ -655,6 +746,7 @@ final class ABiT_SaaS_Auth_API
             'invalid_source_campaign' => 'Enter a source campaign of 120 characters or fewer.',
             'invalid_handoff_notes' => 'Enter handoff notes of 2000 characters or fewer.',
             'invalid_readiness' => 'Select a valid provisioning readiness value.',
+            'rate_limited' => 'Too many admin review attempts. Wait briefly and try again.',
             'update_failed' => 'Decision could not be saved.',
         ];
 
@@ -1413,6 +1505,7 @@ final class ABiT_SaaS_Auth_API
         $consents = self::table('consent_audit_records');
         $tokens = self::table('email_verification_tokens');
         $email_events = self::table('email_delivery_events');
+        $rate_limit_events = self::table('auth_rate_limit_events');
         $provisioning_requests = self::table('provisioning_requests');
         $workspaces = self::table('workspaces');
         $workspace_memberships = self::table('workspace_memberships');
@@ -1579,6 +1672,29 @@ final class ABiT_SaaS_Auth_API
         ");
 
         dbDelta("
+            CREATE TABLE {$rate_limit_events} (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                action VARCHAR(64) NOT NULL,
+                identifier_hash CHAR(64) NULL,
+                ip_hash CHAR(64) NULL,
+                user_id BIGINT UNSIGNED NULL,
+                access_request_id BIGINT UNSIGNED NULL,
+                company_id BIGINT UNSIGNED NULL,
+                result VARCHAR(32) NOT NULL,
+                retry_after INT UNSIGNED NULL,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY  (id),
+                KEY action (action),
+                KEY identifier_hash (identifier_hash),
+                KEY ip_hash (ip_hash),
+                KEY user_id (user_id),
+                KEY access_request_id (access_request_id),
+                KEY result (result),
+                KEY created_at (created_at)
+            ) {$charset_collate};
+        ");
+
+        dbDelta("
             CREATE TABLE {$provisioning_requests} (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 access_request_id BIGINT UNSIGNED NOT NULL,
@@ -1649,6 +1765,12 @@ final class ABiT_SaaS_Auth_API
         self::maybe_install_schema();
 
         $payload = self::request_payload($request);
+        $rate_identifier = strtolower(trim((string) ($payload['business_email'] ?? $payload['email'] ?? '')));
+        $rate_limit = self::enforce_auth_rate_limit('signup', $rate_identifier);
+        if ($rate_limit instanceof WP_REST_Response) {
+            return $rate_limit;
+        }
+
         $validated = self::validate_registration_payload($payload);
 
         if (!empty($validated['field_errors'])) {
@@ -1784,6 +1906,12 @@ final class ABiT_SaaS_Auth_API
         self::maybe_install_schema();
 
         $payload = self::request_payload($request);
+        $rate_identifier = strtolower(trim((string) ($payload['email'] ?? $payload['business_email'] ?? '')));
+        $rate_limit = self::enforce_auth_rate_limit('login', $rate_identifier);
+        if ($rate_limit instanceof WP_REST_Response) {
+            return $rate_limit;
+        }
+
         $validated = self::validate_login_payload($payload);
 
         if (!empty($validated['field_errors'])) {
@@ -1794,9 +1922,17 @@ final class ABiT_SaaS_Auth_API
         $password = $validated['data']['password'];
         $remember = $validated['data']['remember'];
         $user = get_user_by('email', $email);
+        $user_id = $user instanceof WP_User ? (int) $user->ID : 0;
+        $access_request = self::access_request_for_email($email);
+        $access_request_id = is_array($access_request) ? (int) $access_request['id'] : null;
+        $company_id = is_array($access_request) ? (int) $access_request['company_id'] : null;
 
         if (!$user instanceof WP_User || !wp_check_password($password, $user->user_pass, $user->ID)) {
             self::record_failed_login_attempt($email);
+            self::record_auth_rate_limit_event('login_failed', 'failed', $email, $user_id, $access_request_id, $company_id);
+            if ($user instanceof WP_User) {
+                self::maybe_lock_user_after_failed_login($user, $email, $access_request);
+            }
             self::audit_event(
                 'auth_login_failed',
                 [
@@ -1868,6 +2004,7 @@ final class ABiT_SaaS_Auth_API
                 ],
             ]
         );
+        self::record_auth_rate_limit_event('login', 'succeeded', $email, (int) $user->ID, $account_state['access_request_id'], $account_state['company_id']);
 
         return new WP_REST_Response(
             [
@@ -2046,6 +2183,11 @@ final class ABiT_SaaS_Auth_API
 
         $payload = self::request_payload($request);
         $email = strtolower(trim((string) ($payload['business_email'] ?? $payload['email'] ?? '')));
+        $rate_limit = self::enforce_auth_rate_limit('resend_verification', $email);
+        if ($rate_limit instanceof WP_REST_Response) {
+            return $rate_limit;
+        }
+
         if (strlen($email) > 254 || !is_email($email)) {
             return self::field_error_response(['business_email' => 'Enter a valid business email address.']);
         }
@@ -2319,6 +2461,11 @@ final class ABiT_SaaS_Auth_API
             return self::not_authenticated_response();
         }
 
+        $admin_rate_limit = self::enforce_auth_rate_limit('admin_sensitive', 'provisioning_request', (int) $user->ID);
+        if ($admin_rate_limit instanceof WP_REST_Response) {
+            return $admin_rate_limit;
+        }
+
         $access_request = self::access_request_for_user($user);
         $account_state = self::account_state_from_access_request($user, $access_request);
         $onboarding = self::onboarding_payload($user, $access_request, $account_state);
@@ -2395,6 +2542,11 @@ final class ABiT_SaaS_Auth_API
             );
         }
 
+        $admin_rate_limit = self::enforce_auth_rate_limit('admin_sensitive', 'workspace_slug_validate', self::current_authenticated_user_id());
+        if ($admin_rate_limit instanceof WP_REST_Response) {
+            return $admin_rate_limit;
+        }
+
         $payload = self::request_payload($request);
         $company_id = isset($payload['company_id']) ? max(0, (int) $payload['company_id']) : 0;
         $raw_slug = self::first_non_empty([$payload['slug'] ?? null, $payload['workspace_slug'] ?? null]);
@@ -2409,6 +2561,11 @@ final class ABiT_SaaS_Auth_API
     public static function admin_qualification_decision(WP_REST_Request $request): WP_REST_Response
     {
         self::maybe_install_schema();
+
+        $admin_rate_limit = self::enforce_auth_rate_limit('admin_sensitive', 'admin_qualification_decision', self::current_authenticated_user_id());
+        if ($admin_rate_limit instanceof WP_REST_Response) {
+            return $admin_rate_limit;
+        }
 
         $result = self::apply_admin_qualification_decision(
             (int) $request['id'],
@@ -2460,6 +2617,12 @@ final class ABiT_SaaS_Auth_API
             exit;
         }
 
+        $admin_rate_limit = self::enforce_auth_rate_limit('admin_sensitive', 'admin_decision_post', get_current_user_id());
+        if ($admin_rate_limit instanceof WP_REST_Response) {
+            wp_safe_redirect(add_query_arg('decision_error', 'rate_limited', $redirect_url));
+            exit;
+        }
+
         $result = self::apply_admin_qualification_decision($access_request_id, $post, get_current_user_id());
         if (is_wp_error($result)) {
             wp_safe_redirect(add_query_arg('decision_error', $result->get_error_code(), $redirect_url));
@@ -2494,6 +2657,242 @@ final class ABiT_SaaS_Auth_API
             'Admin review access is required.',
             ['status' => 403]
         );
+    }
+
+    private static function enforce_auth_rate_limit(string $action, string $identifier = '', int $user_id = 0, ?int $access_request_id = null, ?int $company_id = null): ?WP_REST_Response
+    {
+        $limited = self::check_auth_rate_limit($action, $identifier, $user_id);
+        if (!empty($limited['limited'])) {
+            $retry_after = (int) $limited['retry_after'];
+            self::record_auth_rate_limit_event($action, 'throttled', $identifier, $user_id, $access_request_id, $company_id, $retry_after);
+            self::audit_auth_rate_limit($action, 'api_request', $retry_after, $user_id, $access_request_id, $company_id);
+
+            return self::rate_limited_response($retry_after);
+        }
+
+        self::record_auth_rate_limit_event($action, 'allowed', $identifier, $user_id, $access_request_id, $company_id);
+        return null;
+    }
+
+    private static function check_auth_rate_limit(string $action, string $identifier = '', int $user_id = 0): array
+    {
+        $policy = self::auth_rate_limit_policy($action);
+        $limit = max(1, (int) $policy['limit']);
+        $window = max(1, (int) $policy['window']);
+        $since = gmdate('Y-m-d H:i:s', time() - $window);
+        $identifier_hash = self::rate_limit_identifier_hash($identifier);
+        $ip_hash = self::rate_limit_ip_hash();
+
+        $count = self::auth_rate_limit_event_count($action, $since, $identifier_hash, $ip_hash, $user_id);
+        if ($count < $limit) {
+            return [
+                'limited' => false,
+                'retry_after' => 0,
+                'count' => $count,
+                'limit' => $limit,
+            ];
+        }
+
+        return [
+            'limited' => true,
+            'retry_after' => self::auth_rate_limit_retry_after($action, $since, $identifier_hash, $ip_hash, $user_id, $window),
+            'count' => $count,
+            'limit' => $limit,
+        ];
+    }
+
+    private static function auth_rate_limit_policy(string $action): array
+    {
+        $defaults = [
+            'signup' => ['limit' => 10, 'window' => HOUR_IN_SECONDS],
+            'login' => ['limit' => 20, 'window' => 15 * MINUTE_IN_SECONDS],
+            'login_failed' => ['limit' => 5, 'window' => 15 * MINUTE_IN_SECONDS, 'lockout' => 15 * MINUTE_IN_SECONDS],
+            'resend_verification' => ['limit' => 10, 'window' => HOUR_IN_SECONDS],
+            'forgot_password' => ['limit' => 5, 'window' => HOUR_IN_SECONDS],
+            'reset_password' => ['limit' => 5, 'window' => HOUR_IN_SECONDS],
+            'admin_sensitive' => ['limit' => 30, 'window' => 5 * MINUTE_IN_SECONDS],
+        ];
+
+        $policies = apply_filters('abit_saas_auth_rate_limit_policies', $defaults);
+        $policy = is_array($policies) && isset($policies[$action]) && is_array($policies[$action])
+            ? $policies[$action]
+            : ($defaults[$action] ?? ['limit' => 20, 'window' => HOUR_IN_SECONDS]);
+
+        return array_merge(['limit' => 20, 'window' => HOUR_IN_SECONDS, 'lockout' => 0], $policy);
+    }
+
+    private static function auth_rate_limit_event_count(string $action, string $since, string $identifier_hash, string $ip_hash, int $user_id): int
+    {
+        global $wpdb;
+
+        $where = ['action = %s', 'created_at >= %s'];
+        $params = [$action, $since];
+        $scopes = [];
+
+        if ($identifier_hash !== '') {
+            $scopes[] = 'identifier_hash = %s';
+            $params[] = $identifier_hash;
+        }
+
+        if ($ip_hash !== '') {
+            $scopes[] = 'ip_hash = %s';
+            $params[] = $ip_hash;
+        }
+
+        if ($user_id > 0) {
+            $scopes[] = 'user_id = %d';
+            $params[] = $user_id;
+        }
+
+        if (empty($scopes)) {
+            return 0;
+        }
+
+        $sql = 'SELECT COUNT(*) FROM ' . self::table('auth_rate_limit_events') . ' WHERE ' . implode(' AND ', $where) . ' AND (' . implode(' OR ', $scopes) . ')';
+        return (int) $wpdb->get_var($wpdb->prepare($sql, $params));
+    }
+
+    private static function auth_rate_limit_retry_after(string $action, string $since, string $identifier_hash, string $ip_hash, int $user_id, int $window): int
+    {
+        global $wpdb;
+
+        $where = ['action = %s', 'created_at >= %s'];
+        $params = [$action, $since];
+        $scopes = [];
+
+        if ($identifier_hash !== '') {
+            $scopes[] = 'identifier_hash = %s';
+            $params[] = $identifier_hash;
+        }
+
+        if ($ip_hash !== '') {
+            $scopes[] = 'ip_hash = %s';
+            $params[] = $ip_hash;
+        }
+
+        if ($user_id > 0) {
+            $scopes[] = 'user_id = %d';
+            $params[] = $user_id;
+        }
+
+        if (empty($scopes)) {
+            return $window;
+        }
+
+        $sql = 'SELECT created_at FROM ' . self::table('auth_rate_limit_events') . ' WHERE ' . implode(' AND ', $where) . ' AND (' . implode(' OR ', $scopes) . ') ORDER BY created_at ASC LIMIT 1';
+        $oldest = $wpdb->get_var($wpdb->prepare($sql, $params));
+        if (!$oldest) {
+            return $window;
+        }
+
+        return max(1, $window - max(0, time() - strtotime((string) $oldest)));
+    }
+
+    private static function record_auth_rate_limit_event(string $action, string $result, string $identifier = '', int $user_id = 0, ?int $access_request_id = null, ?int $company_id = null, ?int $retry_after = null): void
+    {
+        global $wpdb;
+
+        $wpdb->insert(
+            self::table('auth_rate_limit_events'),
+            [
+                'action' => sanitize_key($action),
+                'identifier_hash' => self::rate_limit_identifier_hash($identifier) ?: null,
+                'ip_hash' => self::rate_limit_ip_hash() ?: null,
+                'user_id' => $user_id > 0 ? $user_id : null,
+                'access_request_id' => $access_request_id,
+                'company_id' => $company_id,
+                'result' => sanitize_key($result),
+                'retry_after' => $retry_after,
+                'created_at' => current_time('mysql', true),
+            ],
+            ['%s', '%s', '%s', '%d', '%d', '%d', '%s', '%d', '%s']
+        );
+    }
+
+    private static function maybe_lock_user_after_failed_login(WP_User $user, string $email, ?array $access_request): void
+    {
+        $limited = self::check_auth_rate_limit('login_failed', $email, (int) $user->ID);
+        if (empty($limited['limited'])) {
+            return;
+        }
+
+        $policy = self::auth_rate_limit_policy('login_failed');
+        $lockout = max(60, (int) $policy['lockout']);
+        $locked_until = time() + $lockout;
+        update_user_meta((int) $user->ID, self::AUTH_LOCKOUT_META_KEY, $locked_until);
+
+        $access_request_id = is_array($access_request) ? (int) $access_request['id'] : null;
+        $company_id = is_array($access_request) ? (int) $access_request['company_id'] : null;
+        self::audit_event(
+            'auth_account_lockout_started',
+            [
+                'actor_user_id' => (int) $user->ID,
+                'actor_type' => 'system',
+                'entity_type' => 'user',
+                'entity_id' => (int) $user->ID,
+                'access_request_id' => $access_request_id,
+                'company_id' => $company_id,
+                'event_data' => [
+                    'auth_method' => 'email_password',
+                    'failure_reason_category' => 'too_many_failed_logins',
+                    'lockout_seconds' => $lockout,
+                    'locked_until' => gmdate('Y-m-d H:i:s', $locked_until),
+                    'email_domain_hash' => self::email_domain_hash($email),
+                ],
+            ]
+        );
+    }
+
+    private static function audit_auth_rate_limit(string $action, string $surface, int $retry_after, int $user_id = 0, ?int $access_request_id = null, ?int $company_id = null): void
+    {
+        self::audit_event(
+            'auth_rate_limit_throttled',
+            [
+                'actor_user_id' => $user_id > 0 ? $user_id : null,
+                'actor_type' => $user_id > 0 ? 'user' : 'anonymous',
+                'entity_type' => 'auth_rate_limit',
+                'access_request_id' => $access_request_id,
+                'company_id' => $company_id,
+                'event_data' => [
+                    'action' => sanitize_key($action),
+                    'surface' => sanitize_key($surface),
+                    'retry_after' => $retry_after,
+                    'ip_hash' => self::rate_limit_ip_hash(),
+                ],
+            ]
+        );
+    }
+
+    private static function rate_limited_response(int $retry_after): WP_REST_Response
+    {
+        $response = new WP_REST_Response(
+            [
+                'message' => self::rate_limited_message($retry_after),
+                'code' => 'rate_limited',
+                'retry_after' => $retry_after,
+            ],
+            429
+        );
+        $response->header('Retry-After', (string) max(1, $retry_after));
+
+        return $response;
+    }
+
+    private static function rate_limited_message(int $retry_after): string
+    {
+        return sprintf('Too many attempts. Try again in %d seconds.', max(1, $retry_after));
+    }
+
+    private static function rate_limit_identifier_hash(string $identifier): string
+    {
+        $identifier = strtolower(trim($identifier));
+        return $identifier === '' ? '' : self::hmac($identifier);
+    }
+
+    private static function rate_limit_ip_hash(): string
+    {
+        $ip = self::request_ip();
+        return $ip === '' ? '' : self::hmac($ip);
     }
 
     private static function audit_event(string $event_type, array $context): void
@@ -2928,6 +3327,17 @@ final class ABiT_SaaS_Auth_API
 
         $cookie_user_id = wp_validate_auth_cookie('', 'auth');
         return $cookie_user_id ? (int) $cookie_user_id : 0;
+    }
+
+    private static function user_for_login_identifier(string $identifier): ?WP_User
+    {
+        $identifier = strtolower(trim($identifier));
+        if ($identifier === '') {
+            return null;
+        }
+
+        $user = is_email($identifier) ? get_user_by('email', $identifier) : get_user_by('login', $identifier);
+        return $user instanceof WP_User ? $user : null;
     }
 
     private static function account_state_for_user(WP_User $user): array
@@ -4274,6 +4684,15 @@ final class ABiT_SaaS_Auth_API
     {
         if ((int) $user->user_status !== 0) {
             return true;
+        }
+
+        $locked_until = (int) get_user_meta($user->ID, self::AUTH_LOCKOUT_META_KEY, true);
+        if ($locked_until > time()) {
+            return true;
+        }
+
+        if ($locked_until > 0) {
+            delete_user_meta($user->ID, self::AUTH_LOCKOUT_META_KEY);
         }
 
         $lock_meta_keys = [

@@ -141,6 +141,7 @@ Non-validation errors use this shape:
 | 422 | `provisioning_not_allowed` | Provisioning requested before onboarding/company requirements are met. | Keep user on current gate and display missing requirements if useful. |
 | 422 | `workspace_slug_reserved` or `workspace_slug_taken` | Workspace slug validation. | Reject the entered slug and offer `suggested_slug`. |
 | 423 | `account_locked` | Login for locked account. | Route to locked/support state. |
+| 429 | `rate_limited` | Signup, login, resend, forgot/reset, and admin-sensitive endpoints after too many attempts. | Disable retry until `retry_after`/`Retry-After` has elapsed and show generic cooldown copy. |
 | 423 | `provisioning_not_allowed` | Provisioning requested for locked or rejected account. | Route to locked/rejected state based on account status. |
 | 500 | `registration_failed` | Registration transaction or verification email failed. | Show retry message. |
 | 500 | `provisioning_request_failed` | Provisioning request could not be recorded. | Show retry/support message. |
@@ -281,6 +282,7 @@ Security behavior:
 - Previous unconsumed verification tokens are marked consumed/superseded before a new token is created.
 - Legacy meta-only users keep one current token hash; new resends overwrite prior valid token metadata.
 - Delivery attempts and resend outcomes are written to the auth audit log when the audit table is available.
+- Repeated resend attempts are also tracked in the auth rate-limit event table by hashed identifier/IP and return `429` with `retry_after` plus `Retry-After` when throttled.
 
 ## POST /api/auth/login
 
@@ -341,6 +343,16 @@ Mock invalid credentials response, `401`:
 {
   "message": "We could not sign you in with those details. Check your email and password, then try again.",
   "code": "invalid_login"
+}
+```
+
+Repeated invalid credentials are counted by hashed email/IP. When the failed-login policy is exceeded, the backend writes an `auth_account_lockout_started` audit/risk event and applies a temporary account lockout; later login attempts return the locked response until the lockout expires. Generic high-volume login attempts may return:
+
+```json
+{
+  "message": "Too many attempts. Try again in 900 seconds.",
+  "code": "rate_limited",
+  "retry_after": 900
 }
 ```
 
@@ -702,6 +714,23 @@ Admin override storage:
 - `access_requests.workspace_slug_override` stores the optional admin-selected slug before workspace creation.
 - Workspace creation validates the override. Reserved or duplicate overrides hold workspace creation with `hold_reason` set to the validation code and `suggested_workspace_key` set to a safe alternative.
 - When no override is set, the backend generates a normalized slug from `company_name` and appends a numeric suffix for collisions.
+
+## Auth Rate Limiting and Lockout
+
+The backend records auth attempt metadata in `wp_abit_saas_auth_rate_limit_events` using HMAC hashes for IP and user-supplied identifiers. It does not store raw passwords, reset keys, verification tokens, IP addresses, or user agents in the rate-limit table.
+
+Protected surfaces:
+
+| Surface | Default control |
+| --- | --- |
+| Signup | 10 attempts per hour by hashed email/IP. |
+| Login | 20 attempts per 15 minutes by hashed email or username/IP across the custom API and native WordPress login; 5 failed credential attempts per 15 minutes temporarily lock known accounts for 15 minutes. |
+| Resend verification | Existing 60-second request cooldown and 5 hourly sends per access request, plus 10 attempts per hour by hashed email/IP. |
+| Forgot password | WordPress lost-password requests are limited to 5 attempts per hour by hashed identifier/IP. |
+| Reset password | WordPress reset submissions are limited to 5 attempts per hour by user/IP. |
+| Admin-sensitive endpoints | Workspace slug validation, provisioning request, and admin qualification decision actions are limited to 30 attempts per 5 minutes by admin user/IP. |
+
+Throttle responses use HTTP `429`, JSON `code: "rate_limited"`, body field `retry_after`, and a `Retry-After` response header. Throttles write `auth_rate_limit_throttled` audit/risk events; failed-login lockouts write `auth_account_lockout_started`.
 
 ## Frontend Mock Scenarios
 
