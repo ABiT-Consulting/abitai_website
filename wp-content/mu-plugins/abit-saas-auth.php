@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 final class ABiT_SaaS_Auth_API
 {
-    private const SCHEMA_VERSION = '2026-06-21.01';
+    private const SCHEMA_VERSION = '2026-06-21.02';
     private const REST_NAMESPACE = 'abit-ai/v1';
     private const APPROVED_SENDER_DOMAIN = 'abit.ai';
     private const REVIEW_STATUS_PENDING_EMAIL = 'pending_email_verification';
@@ -35,6 +35,9 @@ final class ABiT_SaaS_Auth_API
     private const SHARED_IP_REQUEST_THRESHOLD = 3;
     private const SHARED_DOMAIN_REQUEST_THRESHOLD = 3;
     private const AUTH_LOCKOUT_META_KEY = 'abit_saas_auth_locked_until';
+    private const SIGNUP_RISK_CHALLENGE_THRESHOLD = 45;
+    private const SIGNUP_RISK_HOLD_THRESHOLD = 80;
+    private const SIGNUP_IP_VELOCITY_THRESHOLD = 5;
 
     public static function bootstrap(): void
     {
@@ -1642,6 +1645,10 @@ final class ABiT_SaaS_Auth_API
                 email_resend_throttled_count INT UNSIGNED NOT NULL DEFAULT 0,
                 failed_login_count INT UNSIGNED NOT NULL DEFAULT 0,
                 last_failed_login_at DATETIME NULL,
+                signup_risk_score SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                signup_risk_level VARCHAR(16) NULL,
+                signup_risk_action VARCHAR(32) NULL,
+                signup_risk_reasons TEXT NULL,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
                 PRIMARY KEY  (id),
@@ -1659,6 +1666,8 @@ final class ABiT_SaaS_Auth_API
                 KEY email_delivery_status (email_delivery_status),
                 KEY failed_login_count (failed_login_count),
                 KEY last_failed_login_at (last_failed_login_at),
+                KEY signup_risk_level (signup_risk_level),
+                KEY signup_risk_action (signup_risk_action),
                 KEY workspace_slug_override (workspace_slug_override),
                 KEY company_size (company_size),
                 KEY industry (industry)
@@ -1852,6 +1861,13 @@ final class ABiT_SaaS_Auth_API
             return self::registration_accepted_response();
         }
 
+        $signup_risk = self::evaluate_signup_risk($data, $payload);
+        if ($signup_risk['action'] === 'challenge' && !self::signup_challenge_passed($payload, $data)) {
+            self::audit_signup_risk_event('auth_signup_challenge_required', $signup_risk, $data);
+
+            return self::signup_challenge_response($data, $signup_risk);
+        }
+
         global $wpdb;
         $now = current_time('mysql', true);
         $token = self::new_token();
@@ -1873,9 +1889,20 @@ final class ABiT_SaaS_Auth_API
             }
 
             $company_id = self::insert_company($data, $now);
-            $access_request_id = self::insert_access_request($data, $user_id, $company_id, $now);
+            $access_request_id = self::insert_access_request($data, $user_id, $company_id, $now, $signup_risk);
             $consent_id = self::insert_consent($data, $user_id, $access_request_id, $now);
             self::link_latest_consent($access_request_id, $consent_id);
+
+            if ($signup_risk['action'] === 'hold') {
+                update_user_meta($user_id, 'abit_saas_risk_hold', 'signup_risk');
+                update_user_meta($user_id, 'abit_saas_signup_risk_score', (int) $signup_risk['score']);
+                update_user_meta($user_id, 'abit_saas_signup_risk_reasons', implode(', ', $signup_risk['reasons']));
+                self::audit_signup_risk_event('auth_signup_risk_held', $signup_risk, $data, $user_id, $access_request_id, $company_id);
+                $wpdb->query('COMMIT');
+
+                return self::registration_accepted_response();
+            }
+
             $token_id = self::insert_verification_token($user_id, $access_request_id, $token_hash, $expires_at, $now);
 
             $mail_sent = self::send_verification_email(
@@ -4849,6 +4876,169 @@ final class ABiT_SaaS_Auth_API
         return preg_match('/^(p[a@]ssw[o0]rd|qwerty|welcome|letmein|admin|administrator|changeme|default)[0-9!@#$%^&*._-]*$/', $raw) === 1;
     }
 
+    private static function evaluate_signup_risk(array $data, array $payload): array
+    {
+        $score = 0;
+        $reasons = [];
+        $email = (string) ($data['business_email'] ?? '');
+        $domain = self::email_domain($email);
+
+        if ($domain !== '' && self::is_disposable_email_domain($domain)) {
+            $score += 80;
+            $reasons[] = 'disposable_email_domain';
+        } elseif ($domain !== '' && self::is_suspicious_email_domain($domain)) {
+            $score += 25;
+            $reasons[] = 'suspicious_email_domain';
+        }
+
+        $ip_velocity = self::signup_ip_velocity_count();
+        if ($ip_velocity >= self::SIGNUP_IP_VELOCITY_THRESHOLD) {
+            $score += 45;
+            $reasons[] = 'high_ip_signup_velocity';
+        }
+
+        if (self::is_suspicious_signup_user_agent((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''))) {
+            $score += 45;
+            $reasons[] = 'suspicious_user_agent';
+        }
+
+        if (self::signup_honeypot_filled($payload)) {
+            $score += 90;
+            $reasons[] = 'honeypot_field_filled';
+        }
+
+        $score = max(0, min(100, (int) apply_filters('abit_saas_auth_signup_risk_score', $score, $data, $payload, $reasons)));
+        $reasons = array_values(array_unique(array_map('sanitize_key', $reasons)));
+        $hold_threshold = (int) apply_filters('abit_saas_auth_signup_hold_threshold', self::SIGNUP_RISK_HOLD_THRESHOLD, $data, $payload);
+        $challenge_threshold = (int) apply_filters('abit_saas_auth_signup_challenge_threshold', self::SIGNUP_RISK_CHALLENGE_THRESHOLD, $data, $payload);
+
+        $action = 'allow';
+        if ($score >= $hold_threshold) {
+            $action = 'hold';
+        } elseif ($score >= $challenge_threshold) {
+            $action = 'challenge';
+        }
+
+        return [
+            'score' => $score,
+            'level' => $score >= $hold_threshold ? 'high' : ($score >= $challenge_threshold ? 'medium' : 'low'),
+            'action' => $action,
+            'reasons' => $reasons,
+            'ip_velocity_count' => $ip_velocity,
+        ];
+    }
+
+    private static function signup_ip_velocity_count(): int
+    {
+        $ip_hash = self::rate_limit_ip_hash();
+        if ($ip_hash === '') {
+            return 0;
+        }
+
+        return self::auth_rate_limit_event_count(
+            'signup',
+            gmdate('Y-m-d H:i:s', time() - HOUR_IN_SECONDS),
+            '',
+            $ip_hash,
+            0
+        );
+    }
+
+    private static function is_suspicious_signup_user_agent(string $user_agent): bool
+    {
+        $user_agent = strtolower(trim($user_agent));
+        if ($user_agent === '') {
+            return true;
+        }
+
+        if (strlen($user_agent) < 12) {
+            return true;
+        }
+
+        return preg_match('/\b(bot|crawler|curl|headlesschrome|httpclient|libwww|masscan|python-requests|scrapy|spider|wget)\b/', $user_agent) === 1;
+    }
+
+    private static function signup_honeypot_filled(array $payload): bool
+    {
+        foreach (['website', 'url', 'homepage', 'confirm_email_address', 'company_website_optional'] as $key) {
+            if (isset($payload[$key]) && trim((string) $payload[$key]) !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function signup_challenge_passed(array $payload, array $data): bool
+    {
+        $token = trim((string) ($payload['bot_challenge_token'] ?? $payload['challenge_token'] ?? ''));
+        $response = strtolower(trim((string) ($payload['bot_challenge_response'] ?? $payload['challenge_response'] ?? '')));
+
+        return $response === 'confirm_business_signup' && self::valid_signup_challenge_token($token, $data);
+    }
+
+    private static function signup_challenge_response(array $data, array $risk): WP_REST_Response
+    {
+        return new WP_REST_Response(
+            [
+                'message' => 'Please complete the additional signup check.',
+                'code' => 'signup_challenge_required',
+                'status' => 'challenge_required',
+                'challenge' => [
+                    'type' => 'text_confirmation',
+                    'token' => self::signup_challenge_token($data),
+                    'response_field' => 'bot_challenge_response',
+                ],
+                'risk' => [
+                    'level' => $risk['level'],
+                    'reasons' => $risk['reasons'],
+                ],
+            ],
+            202
+        );
+    }
+
+    private static function signup_challenge_token(array $data, ?int $bucket = null): string
+    {
+        $bucket = $bucket ?? (int) floor(time() / (15 * MINUTE_IN_SECONDS));
+        return self::hmac(strtolower((string) ($data['business_email'] ?? '')) . '|' . self::request_ip() . '|' . (string) ($_SERVER['HTTP_USER_AGENT'] ?? '') . '|' . $bucket);
+    }
+
+    private static function valid_signup_challenge_token(string $token, array $data): bool
+    {
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+            return false;
+        }
+
+        $bucket = (int) floor(time() / (15 * MINUTE_IN_SECONDS));
+        return hash_equals(self::signup_challenge_token($data, $bucket), $token)
+            || hash_equals(self::signup_challenge_token($data, $bucket - 1), $token);
+    }
+
+    private static function audit_signup_risk_event(string $event_type, array $risk, array $data, int $user_id = 0, ?int $access_request_id = null, ?int $company_id = null): void
+    {
+        self::audit_event(
+            $event_type,
+            [
+                'actor_user_id' => $user_id > 0 ? $user_id : null,
+                'actor_type' => $user_id > 0 ? 'user' : 'anonymous',
+                'entity_type' => 'access_request',
+                'entity_id' => $access_request_id,
+                'access_request_id' => $access_request_id,
+                'company_id' => $company_id,
+                'event_data' => [
+                    'signup_flow_version' => 'api_v1',
+                    'risk_score' => (int) ($risk['score'] ?? 0),
+                    'risk_level' => (string) ($risk['level'] ?? ''),
+                    'risk_action' => (string) ($risk['action'] ?? ''),
+                    'risk_reasons' => (array) ($risk['reasons'] ?? []),
+                    'ip_velocity_count' => (int) ($risk['ip_velocity_count'] ?? 0),
+                    'email_domain_hash' => self::email_domain_hash((string) ($data['business_email'] ?? '')),
+                ],
+            ]
+        );
+    }
+
     private static function argon2id_available(): bool
     {
         if (!defined('PASSWORD_ARGON2ID') || !function_exists('password_algos')) {
@@ -4961,10 +5151,15 @@ final class ABiT_SaaS_Auth_API
         return (int) $wpdb->insert_id;
     }
 
-    private static function insert_access_request(array $data, int $user_id, int $company_id, string $now): int
+    private static function insert_access_request(array $data, int $user_id, int $company_id, string $now, array $signup_risk = []): int
     {
         global $wpdb;
         $legal = self::current_legal_versions();
+        $risk_score = max(0, min(100, (int) ($signup_risk['score'] ?? 0)));
+        $risk_action = sanitize_key((string) ($signup_risk['action'] ?? 'allow'));
+        $risk_level = sanitize_key((string) ($signup_risk['level'] ?? 'low'));
+        $risk_reasons = array_values(array_filter(array_map('sanitize_text_field', (array) ($signup_risk['reasons'] ?? []))));
+        $review_status = $risk_action === 'hold' ? self::REVIEW_STATUS_ON_HOLD : self::REVIEW_STATUS_PENDING_EMAIL;
         $inserted = $wpdb->insert(
             self::table('access_requests'),
             [
@@ -4975,16 +5170,20 @@ final class ABiT_SaaS_Auth_API
                 'company_name' => $data['company_name'],
                 'country_region' => $data['country_region'],
                 'intended_use_case' => $data['intended_use_case'],
-                'review_status' => self::REVIEW_STATUS_PENDING_EMAIL,
+                'review_status' => $review_status,
                 'handoff_priority' => 'normal',
                 'handoff_queue_status' => 'unassigned',
                 'terms_privacy_accepted_at' => $now,
                 'terms_version' => $legal['terms_version'],
                 'privacy_version' => $legal['privacy_version'],
+                'signup_risk_score' => $risk_score,
+                'signup_risk_level' => $risk_level,
+                'signup_risk_action' => $risk_action,
+                'signup_risk_reasons' => empty($risk_reasons) ? null : implode("\n", $risk_reasons),
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-            ['%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+            ['%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s']
         );
         if (false === $inserted || empty($wpdb->insert_id)) {
             throw new RuntimeException('Access request could not be created.');
