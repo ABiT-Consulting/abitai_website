@@ -218,6 +218,41 @@ if ( ! function_exists( 'abitai_company_profile_get_owned_company_id' ) ) {
 	}
 }
 
+if ( ! function_exists( 'abitai_company_profile_audit_tenant_denial' ) ) {
+	/**
+	 * Audit a blocked cross-tenant company profile attempt without logging payload data.
+	 *
+	 * @param int    $wp_user_id Current WordPress user ID.
+	 * @param string $reason Denial reason key.
+	 * @param int    $requested_user_id Requested user ID.
+	 * @param int    $requested_company_id Requested company ID.
+	 * @param int    $owned_company_id Company ID owned by the current user.
+	 */
+	function abitai_company_profile_audit_tenant_denial( $wp_user_id, $reason, $requested_user_id = 0, $requested_company_id = 0, $owned_company_id = 0 ) {
+		if ( ! function_exists( 'abitai_auth_write_audit_log' ) ) {
+			return;
+		}
+
+		abitai_auth_write_audit_log(
+			'auth_tenant_scope_denied',
+			array(
+				'actor_user_id' => absint( $wp_user_id ),
+				'actor_type'    => 'user',
+				'entity_type'   => 'company_profile',
+				'entity_id'     => absint( $requested_company_id ),
+				'company_id'    => absint( $owned_company_id ),
+				'event_data'    => array(
+					'api_surface'          => 'company_profile_update',
+					'denial_reason'        => sanitize_key( $reason ),
+					'requested_user_id'    => absint( $requested_user_id ),
+					'requested_company_id' => absint( $requested_company_id ),
+					'owned_company_id'     => absint( $owned_company_id ),
+				),
+			)
+		);
+	}
+}
+
 if ( ! function_exists( 'abitai_company_profile_upsert_tables' ) ) {
 	/**
 	 * Mirror company profile updates into the custom auth tables when present.
@@ -517,10 +552,12 @@ if ( ! function_exists( 'abitai_company_profile_update' ) ) {
 		$owned_company_id   = abitai_company_profile_get_owned_company_id( $wp_user_id );
 
 		if ( $requested_user_id > 0 && $requested_user_id !== $wp_user_id ) {
+			abitai_company_profile_audit_tenant_denial( $wp_user_id, 'requested_user_mismatch', $requested_user_id, $requested_company, $owned_company_id );
 			return abitai_company_profile_api_error( 'abitai_company_profile_forbidden_user', __( 'You can only update your own company profile.', 'astra' ), 403 );
 		}
 
 		if ( $requested_company > 0 && $requested_company !== $owned_company_id ) {
+			abitai_company_profile_audit_tenant_denial( $wp_user_id, 'requested_company_mismatch', $requested_user_id, $requested_company, $owned_company_id );
 			return abitai_company_profile_api_error( 'abitai_company_profile_forbidden_company', __( 'You cannot update another company profile.', 'astra' ), 403 );
 		}
 

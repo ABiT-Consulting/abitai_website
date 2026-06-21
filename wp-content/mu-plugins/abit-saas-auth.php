@@ -2498,6 +2498,11 @@ final class ABiT_SaaS_Auth_API
 
         $access_request = self::access_request_for_user($user);
         $account_state = self::account_state_from_access_request($user, $access_request);
+        $scope_denial = self::tenant_scope_denial_response($request, $user, $access_request, 'auth_me');
+        if ($scope_denial instanceof WP_REST_Response) {
+            return $scope_denial;
+        }
+
         $onboarding = self::onboarding_payload($user, $access_request, $account_state);
         $provisioning = self::provisioning_payload($user, $access_request, $account_state, $onboarding);
         $workspace = self::workspace_payload($user, $access_request);
@@ -2558,6 +2563,11 @@ final class ABiT_SaaS_Auth_API
 
         $access_request = self::access_request_for_user($user);
         $account_state = self::account_state_from_access_request($user, $access_request);
+        $scope_denial = self::tenant_scope_denial_response($request, $user, $access_request, 'provisioning_request');
+        if ($scope_denial instanceof WP_REST_Response) {
+            return $scope_denial;
+        }
+
         $onboarding = self::onboarding_payload($user, $access_request, $account_state);
         $eligibility = self::provisioning_eligibility($user, $access_request, $account_state, $onboarding);
 
@@ -2747,6 +2757,45 @@ final class ABiT_SaaS_Auth_API
             'Admin review access is required.',
             ['status' => 403]
         );
+    }
+
+    private static function tenant_scope_denial_response(WP_REST_Request $request, WP_User $user, ?array $access_request, string $surface): ?WP_REST_Response
+    {
+        $requested_company_id = self::requested_positive_int($request, 'company_id');
+        $requested_access_request_id = self::requested_positive_int($request, 'access_request_id');
+        $owned_company_id = is_array($access_request) ? (int) ($access_request['company_id'] ?? 0) : 0;
+        $owned_access_request_id = is_array($access_request) ? (int) ($access_request['id'] ?? 0) : 0;
+
+        $company_mismatch = $requested_company_id > 0 && $requested_company_id !== $owned_company_id;
+        $access_request_mismatch = $requested_access_request_id > 0 && $requested_access_request_id !== $owned_access_request_id;
+        if (!$company_mismatch && !$access_request_mismatch) {
+            return null;
+        }
+
+        $reason = $company_mismatch ? 'requested_company_mismatch' : 'requested_access_request_mismatch';
+        self::audit_tenant_scope_denied(
+            $surface,
+            (int) $user->ID,
+            $reason,
+            $requested_company_id,
+            $owned_company_id,
+            $requested_access_request_id,
+            $owned_access_request_id
+        );
+
+        return new WP_REST_Response(
+            [
+                'message' => 'Access to the requested company scope is denied.',
+                'code' => 'tenant_scope_denied',
+            ],
+            403
+        );
+    }
+
+    private static function requested_positive_int(WP_REST_Request $request, string $key): int
+    {
+        $value = $request->get_param($key);
+        return $value === null ? 0 : max(0, (int) $value);
     }
 
     private static function enforce_auth_rate_limit(string $action, string $identifier = '', int $user_id = 0, ?int $access_request_id = null, ?int $company_id = null): ?WP_REST_Response
@@ -2948,6 +2997,29 @@ final class ABiT_SaaS_Auth_API
                     'surface' => sanitize_key($surface),
                     'retry_after' => $retry_after,
                     'ip_hash' => self::rate_limit_ip_hash(),
+                ],
+            ]
+        );
+    }
+
+    private static function audit_tenant_scope_denied(string $surface, int $user_id, string $reason, int $requested_company_id, int $owned_company_id, int $requested_access_request_id, int $owned_access_request_id): void
+    {
+        self::audit_event(
+            'auth_tenant_scope_denied',
+            [
+                'actor_user_id' => $user_id,
+                'actor_type' => 'user',
+                'entity_type' => 'tenant_scope',
+                'entity_id' => $requested_company_id > 0 ? $requested_company_id : $requested_access_request_id,
+                'company_id' => $owned_company_id > 0 ? $owned_company_id : null,
+                'access_request_id' => $owned_access_request_id > 0 ? $owned_access_request_id : null,
+                'event_data' => [
+                    'api_surface' => sanitize_key($surface),
+                    'denial_reason' => sanitize_key($reason),
+                    'requested_company_id' => $requested_company_id,
+                    'owned_company_id' => $owned_company_id,
+                    'requested_access_request_id' => $requested_access_request_id,
+                    'owned_access_request_id' => $owned_access_request_id,
                 ],
             ]
         );
