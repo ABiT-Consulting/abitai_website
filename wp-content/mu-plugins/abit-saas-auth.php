@@ -46,6 +46,10 @@ final class ABiT_SaaS_Auth_API
     private const LAUNCH_STAGE_INTERNAL_BETA = 'internal_beta';
     private const LAUNCH_STAGE_CUSTOMER_BETA = 'customer_beta';
     private const LAUNCH_STAGE_PUBLIC = 'public';
+    private const MONITORING_FAILURE_RATE_ALERT_THRESHOLD = 20.0;
+    private const MONITORING_EMAIL_FAILURE_ALERT_THRESHOLD = 3;
+    private const MONITORING_LOGIN_ERROR_ALERT_THRESHOLD = 5;
+    private const MONITORING_RATE_LIMIT_ALERT_THRESHOLD = 5;
 
     public static function bootstrap(): void
     {
@@ -482,6 +486,14 @@ final class ABiT_SaaS_Auth_API
             'abit-signup-review',
             [__CLASS__, 'render_signup_review_page']
         );
+
+        add_management_page(
+            'ABiT Auth Monitoring',
+            'ABiT Auth Monitoring',
+            'list_users',
+            'abit-auth-monitoring',
+            [__CLASS__, 'render_auth_monitoring_page']
+        );
     }
 
     public static function render_email_observability_page(): void
@@ -528,6 +540,238 @@ final class ABiT_SaaS_Auth_API
         }
 
         echo '</tbody></table></div>';
+    }
+
+    public static function render_auth_monitoring_page(): void
+    {
+        if (!current_user_can('list_users')) {
+            wp_die(esc_html__('You do not have permission to view this page.', 'abit-saas-auth'));
+        }
+
+        self::maybe_install_schema();
+
+        $metrics = self::auth_monitoring_metrics();
+        $alerts = self::auth_monitoring_alerts($metrics);
+        $recent_events = self::auth_monitoring_recent_events();
+
+        echo '<div class="wrap"><h1>ABiT Auth Monitoring</h1>';
+        echo '<p>Live production auth events for launch monitoring. Counts use UTC timestamps and do not expose raw tokens, full email addresses, passwords, or provider payloads.</p>';
+
+        echo '<h2>Abnormal Failure Alerts</h2>';
+        if (empty($alerts)) {
+            echo '<div class="notice notice-success inline"><p>No abnormal auth failure patterns detected in the current one-hour window.</p></div>';
+        } else {
+            echo '<div class="notice notice-error inline"><p>' . esc_html(count($alerts)) . ' auth monitoring alert(s) need review.</p></div>';
+            echo '<table class="widefat fixed striped"><thead><tr>';
+            foreach (['Severity', 'Signal', 'Window', 'Observed', 'Threshold', 'Operator action'] as $heading) {
+                echo '<th scope="col">' . esc_html($heading) . '</th>';
+            }
+            echo '</tr></thead><tbody>';
+            foreach ($alerts as $alert) {
+                echo '<tr>';
+                echo '<td>' . esc_html((string) $alert['severity']) . '</td>';
+                echo '<td>' . esc_html((string) $alert['signal']) . '</td>';
+                echo '<td>' . esc_html((string) $alert['window']) . '</td>';
+                echo '<td>' . esc_html((string) $alert['observed']) . '</td>';
+                echo '<td>' . esc_html((string) $alert['threshold']) . '</td>';
+                echo '<td>' . esc_html((string) $alert['action']) . '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        }
+
+        echo '<h2>Launch Funnel and Failure Signals</h2>';
+        echo '<table class="widefat fixed striped"><thead><tr>';
+        foreach (['Metric', 'Last 1 hour', 'Last 24 hours', 'Signal type', 'Notes'] as $heading) {
+            echo '<th scope="col">' . esc_html($heading) . '</th>';
+        }
+        echo '</tr></thead><tbody>';
+        foreach ($metrics as $metric) {
+            echo '<tr>';
+            echo '<td><strong>' . esc_html((string) $metric['label']) . '</strong></td>';
+            echo '<td>' . esc_html((string) $metric['last_hour']) . '</td>';
+            echo '<td>' . esc_html((string) $metric['last_day']) . '</td>';
+            echo '<td>' . esc_html((string) $metric['type']) . '</td>';
+            echo '<td>' . esc_html((string) $metric['notes']) . '</td>';
+            echo '</tr>';
+        }
+        echo '</tbody></table>';
+
+        echo '<h2>Recent Production Events</h2>';
+        echo '<table class="widefat fixed striped"><thead><tr>';
+        foreach (['Time (UTC)', 'Event', 'Status', 'Request', 'Company', 'Details'] as $heading) {
+            echo '<th scope="col">' . esc_html($heading) . '</th>';
+        }
+        echo '</tr></thead><tbody>';
+        if (empty($recent_events)) {
+            echo '<tr><td colspan="6">No production auth events recorded yet.</td></tr>';
+        } else {
+            foreach ($recent_events as $event) {
+                echo '<tr>';
+                echo '<td>' . esc_html((string) $event['created_at']) . '</td>';
+                echo '<td>' . esc_html((string) $event['event_type']) . '</td>';
+                echo '<td>' . esc_html((string) $event['status']) . '</td>';
+                echo '<td>' . esc_html((string) $event['request']) . '</td>';
+                echo '<td>' . esc_html((string) $event['company']) . '</td>';
+                echo '<td>' . esc_html((string) $event['details']) . '</td>';
+                echo '</tr>';
+            }
+        }
+        echo '</tbody></table></div>';
+    }
+
+    private static function auth_monitoring_metrics(): array
+    {
+        global $wpdb;
+
+        $access_requests = self::table('access_requests');
+        $email_events = self::table('email_delivery_events');
+        $rate_events = self::table('auth_rate_limit_events');
+
+        $signup_starts_1h = self::auth_monitoring_count($wpdb->prepare("SELECT COUNT(*) FROM {$rate_events} WHERE action = %s AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)", 'signup'));
+        $signup_starts_24h = self::auth_monitoring_count($wpdb->prepare("SELECT COUNT(*) FROM {$rate_events} WHERE action = %s AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)", 'signup'));
+        $account_created_1h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$access_requests} WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)");
+        $account_created_24h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$access_requests} WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)");
+        $verification_sent_1h = self::auth_monitoring_count($wpdb->prepare("SELECT COUNT(*) FROM {$email_events} WHERE message_type = %s AND delivery_status IN ('accepted', 'sent', 'prepared') AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)", 'email_verification'));
+        $verification_sent_24h = self::auth_monitoring_count($wpdb->prepare("SELECT COUNT(*) FROM {$email_events} WHERE message_type = %s AND delivery_status IN ('accepted', 'sent', 'prepared') AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)", 'email_verification'));
+        $verification_completed_1h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$access_requests} WHERE email_verified_at IS NOT NULL AND email_verified_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)");
+        $verification_completed_24h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$access_requests} WHERE email_verified_at IS NOT NULL AND email_verified_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)");
+        $login_errors_1h = self::auth_monitoring_count($wpdb->prepare("SELECT COUNT(*) FROM {$rate_events} WHERE action = %s AND result = %s AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)", 'login_failed', 'failed'));
+        $login_errors_24h = self::auth_monitoring_count($wpdb->prepare("SELECT COUNT(*) FROM {$rate_events} WHERE action = %s AND result = %s AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)", 'login_failed', 'failed'));
+        $reset_requests_1h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$rate_events} WHERE action IN ('forgot_password', 'reset_password') AND result IN ('allowed', 'accepted_unknown') AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)");
+        $reset_requests_24h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$rate_events} WHERE action IN ('forgot_password', 'reset_password') AND result IN ('allowed', 'accepted_unknown') AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)");
+        $email_failures_1h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$email_events} WHERE delivery_status IN ('failed', 'bounced') AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)");
+        $email_failures_24h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$email_events} WHERE delivery_status IN ('failed', 'bounced') AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)");
+        $rate_limit_events_1h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$rate_events} WHERE result LIKE 'throttled%' AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 HOUR)");
+        $rate_limit_events_24h = self::auth_monitoring_count("SELECT COUNT(*) FROM {$rate_events} WHERE result LIKE 'throttled%' AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)");
+
+        return [
+            'signup_starts' => self::auth_monitoring_metric('Signup starts', $signup_starts_1h, $signup_starts_24h, 'funnel', 'POST /api/auth/register attempts accepted by the app rate limiter.'),
+            'account_created' => self::auth_monitoring_metric('Account created', $account_created_1h, $account_created_24h, 'funnel', 'Access request records created after validation and rollout gates.'),
+            'verification_sent' => self::auth_monitoring_metric('Verification sent', $verification_sent_1h, $verification_sent_24h, 'funnel', 'Accepted verification email send events.'),
+            'verification_completed' => self::auth_monitoring_metric('Verification completed', $verification_completed_1h, $verification_completed_24h, 'funnel', 'Access requests with email_verified_at set.'),
+            'login_errors' => self::auth_monitoring_metric('Login errors', $login_errors_1h, $login_errors_24h, 'failure', 'Invalid credential failures captured from API and WordPress login.'),
+            'reset_requests' => self::auth_monitoring_metric('Reset requests', $reset_requests_1h, $reset_requests_24h, 'support', 'Password reset and forgot-password requests with generic acceptance behavior.'),
+            'email_failures' => self::auth_monitoring_metric('Email failures', $email_failures_1h, $email_failures_24h, 'failure', 'Failed or bounced transactional email events.'),
+            'rate_limit_events' => self::auth_monitoring_metric('Rate-limit events', $rate_limit_events_1h, $rate_limit_events_24h, 'abuse', 'Throttled signup, login, resend, reset, and admin-sensitive attempts.'),
+        ];
+    }
+
+    private static function auth_monitoring_alerts(array $metrics): array
+    {
+        $alerts = [];
+        $email_failures = (int) ($metrics['email_failures']['last_hour'] ?? 0);
+        $verification_sent = (int) ($metrics['verification_sent']['last_hour'] ?? 0);
+        $email_attempts = $email_failures + $verification_sent;
+        $email_failure_rate = $email_attempts > 0 ? round(($email_failures / $email_attempts) * 100, 1) : 0.0;
+
+        if ($email_failures >= self::MONITORING_EMAIL_FAILURE_ALERT_THRESHOLD) {
+            $alerts[] = self::auth_monitoring_alert('critical', 'Email failures', 'last 1 hour', (string) $email_failures, self::MONITORING_EMAIL_FAILURE_ALERT_THRESHOLD . '+', 'Check transactional provider, DNS, and wp_mail failures.');
+        }
+
+        if ($email_attempts >= 5 && $email_failure_rate >= self::MONITORING_FAILURE_RATE_ALERT_THRESHOLD) {
+            $alerts[] = self::auth_monitoring_alert('critical', 'Email failure rate', 'last 1 hour', $email_failure_rate . '%', self::MONITORING_FAILURE_RATE_ALERT_THRESHOLD . '%+', 'Pause launch promotion until verification/reset email delivery is healthy.');
+        }
+
+        $login_errors = (int) ($metrics['login_errors']['last_hour'] ?? 0);
+        if ($login_errors >= self::MONITORING_LOGIN_ERROR_ALERT_THRESHOLD) {
+            $alerts[] = self::auth_monitoring_alert('warning', 'Login errors', 'last 1 hour', (string) $login_errors, self::MONITORING_LOGIN_ERROR_ALERT_THRESHOLD . '+', 'Review failed-login patterns and account lockouts.');
+        }
+
+        $rate_limits = (int) ($metrics['rate_limit_events']['last_hour'] ?? 0);
+        if ($rate_limits >= self::MONITORING_RATE_LIMIT_ALERT_THRESHOLD) {
+            $alerts[] = self::auth_monitoring_alert('warning', 'Rate-limit events', 'last 1 hour', (string) $rate_limits, self::MONITORING_RATE_LIMIT_ALERT_THRESHOLD . '+', 'Check whether normal launch traffic is being throttled or abuse is active.');
+        }
+
+        return $alerts;
+    }
+
+    private static function auth_monitoring_recent_events(): array
+    {
+        global $wpdb;
+
+        $access_requests = self::table('access_requests');
+        $email_events = self::table('email_delivery_events');
+        $rate_events = self::table('auth_rate_limit_events');
+
+        $rows = $wpdb->get_results(
+            "SELECT * FROM (
+                SELECT ar.created_at AS created_at, 'account_created' AS event_type, ar.review_status AS status, ar.id AS access_request_id, ar.business_email AS business_email, ar.company_name AS company_name, 'Signup access request created' AS details
+                FROM {$access_requests} ar
+                UNION ALL
+                SELECT ar.email_verified_at AS created_at, 'verification_completed' AS event_type, ar.review_status AS status, ar.id AS access_request_id, ar.business_email AS business_email, ar.company_name AS company_name, 'Email verification completed' AS details
+                FROM {$access_requests} ar
+                WHERE ar.email_verified_at IS NOT NULL
+                UNION ALL
+                SELECT ee.created_at AS created_at, CONCAT('email_', ee.event_type) AS event_type, ee.delivery_status AS status, ee.access_request_id AS access_request_id, ar.business_email AS business_email, ar.company_name AS company_name, CONCAT(ee.message_type, ' / ', COALESCE(ee.failure_reason_category, ee.subject_key, '')) AS details
+                FROM {$email_events} ee
+                LEFT JOIN {$access_requests} ar ON ar.id = ee.access_request_id
+                WHERE ee.message_type IN ('email_verification', 'password_reset', 'wordpress_mail')
+                UNION ALL
+                SELECT rl.created_at AS created_at, CONCAT('rate_limit_', rl.action) AS event_type, rl.result AS status, rl.access_request_id AS access_request_id, ar.business_email AS business_email, ar.company_name AS company_name, CONCAT('retry_after=', COALESCE(rl.retry_after, 0)) AS details
+                FROM {$rate_events} rl
+                LEFT JOIN {$access_requests} ar ON ar.id = rl.access_request_id
+                WHERE rl.result LIKE 'throttled%' OR rl.action IN ('signup', 'login_failed', 'forgot_password', 'reset_password')
+            ) events
+            WHERE created_at IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 50",
+            ARRAY_A
+        );
+
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        return array_map(
+            static function (array $row): array {
+                $email = (string) ($row['business_email'] ?? '');
+                $request = '#' . (int) ($row['access_request_id'] ?? 0);
+                if ($email !== '') {
+                    $request .= ' / ' . self::masked_email($email);
+                }
+
+                return [
+                    'created_at' => (string) ($row['created_at'] ?? ''),
+                    'event_type' => (string) ($row['event_type'] ?? ''),
+                    'status' => (string) ($row['status'] ?? ''),
+                    'request' => $request,
+                    'company' => (string) ($row['company_name'] ?? ''),
+                    'details' => trim((string) ($row['details'] ?? '')),
+                ];
+            },
+            $rows
+        );
+    }
+
+    private static function auth_monitoring_count(string $sql): int
+    {
+        global $wpdb;
+
+        return max(0, (int) $wpdb->get_var($sql));
+    }
+
+    private static function auth_monitoring_metric(string $label, int $last_hour, int $last_day, string $type, string $notes): array
+    {
+        return [
+            'label' => $label,
+            'last_hour' => $last_hour,
+            'last_day' => $last_day,
+            'type' => $type,
+            'notes' => $notes,
+        ];
+    }
+
+    private static function auth_monitoring_alert(string $severity, string $signal, string $window, string $observed, string $threshold, string $action): array
+    {
+        return [
+            'severity' => $severity,
+            'signal' => $signal,
+            'window' => $window,
+            'observed' => $observed,
+            'threshold' => $threshold,
+            'action' => $action,
+        ];
     }
 
     public static function render_signup_review_page(): void
