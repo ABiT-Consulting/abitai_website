@@ -90,6 +90,29 @@ define( 'WP_DEBUG', false );
 /* Add any custom values between this line and the "stop editing" line. */
 
 /**
+ * Production domain and ABiT SaaS auth launch settings.
+ *
+ * Keep secret values in the deployment secret store or hosting control panel,
+ * not in this repository.
+ */
+if ( getenv( 'WP_HOME' ) ) {
+	define( 'WP_HOME', getenv( 'WP_HOME' ) );
+}
+
+if ( getenv( 'WP_SITEURL' ) ) {
+	define( 'WP_SITEURL', getenv( 'WP_SITEURL' ) );
+}
+
+define( 'ABIT_SAAS_TERMS_VERSION', getenv( 'ABIT_SAAS_TERMS_VERSION' ) ?: 'terms-2026-06-14' );
+define( 'ABIT_SAAS_PRIVACY_VERSION', getenv( 'ABIT_SAAS_PRIVACY_VERSION' ) ?: 'privacy-2026-06-14' );
+define( 'ABIT_SAAS_CONSENT_TEXT_VERSION', getenv( 'ABIT_SAAS_CONSENT_TEXT_VERSION' ) ?: 'signup-consent-2026-06-14' );
+define( 'ABIT_SAAS_LEGAL_LOCALE', getenv( 'ABIT_SAAS_LEGAL_LOCALE' ) ?: 'en' );
+
+define( 'ABIT_SAAS_AUTH_HASH_KEY', getenv( 'ABIT_SAAS_AUTH_HASH_KEY' ) ?: '' );
+define( 'ABIT_SAAS_AUTH_HASH_KEY_VERSION', getenv( 'ABIT_SAAS_AUTH_HASH_KEY_VERSION' ) ?: 'wp-auth-salt-v1' );
+define( 'ABIT_SAAS_PROVISIONING_CAPACITY_READY', getenv( 'ABIT_SAAS_PROVISIONING_CAPACITY_READY' ) ?: 'false' );
+
+/**
  * ABiT SaaS auth transactional email.
  *
  * Configure these from environment variables or deployment secrets in production.
