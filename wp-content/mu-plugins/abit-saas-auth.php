@@ -39,6 +39,9 @@ final class ABiT_SaaS_Auth_API
     private const SIGNUP_RISK_CHALLENGE_THRESHOLD = 45;
     private const SIGNUP_RISK_HOLD_THRESHOLD = 80;
     private const SIGNUP_IP_VELOCITY_THRESHOLD = 5;
+    private const SESSION_IDLE_SECONDS = 43200;
+    private const SESSION_REMEMBER_SECONDS = 604800;
+    private const AUTH_COOKIE_SAMESITE = 'Lax';
 
     public static function bootstrap(): void
     {
@@ -59,12 +62,87 @@ final class ABiT_SaaS_Auth_API
         add_action('wp_login_failed', [__CLASS__, 'record_wordpress_login_failure'], 10, 2);
         add_action('lostpassword_post', [__CLASS__, 'rate_limit_lost_password_request'], 10, 2);
         add_action('validate_password_reset', [__CLASS__, 'validate_password_reset_policy'], 10, 2);
+        add_action('after_password_reset', [__CLASS__, 'revoke_sessions_after_password_reset'], 10, 2);
         add_action('user_profile_update_errors', [__CLASS__, 'validate_user_profile_password_policy'], 10, 3);
+        add_filter('auth_cookie_expiration', [__CLASS__, 'auth_cookie_expiration'], 10, 3);
+        add_filter('secure_auth_cookie', [__CLASS__, 'force_secure_auth_cookie'], 10, 2);
+        add_filter('secure_logged_in_cookie', [__CLASS__, 'force_secure_logged_in_cookie'], 10, 3);
+        add_filter('send_auth_cookies', [__CLASS__, 'send_hardened_auth_cookies'], 10, 6);
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
+        add_filter('rest_pre_dispatch', [__CLASS__, 'enforce_rest_request_security'], 10, 3);
+        add_filter('rest_pre_serve_request', [__CLASS__, 'send_restricted_cors_headers'], 9, 4);
         add_action('template_redirect', [__CLASS__, 'handle_pretty_api_route'], 0);
         add_action('admin_menu', [__CLASS__, 'register_email_observability_page']);
         add_action('admin_post_abit_saas_auth_admin_decision', [__CLASS__, 'handle_admin_decision_post']);
         add_action('abit_saas_auth_email_bounced', [__CLASS__, 'record_email_bounce'], 10, 1);
+    }
+
+    public static function auth_cookie_expiration(int $seconds, int $user_id, bool $remember): int
+    {
+        return $remember ? self::SESSION_REMEMBER_SECONDS : self::SESSION_IDLE_SECONDS;
+    }
+
+    public static function force_secure_auth_cookie(bool $secure, int $user_id): bool
+    {
+        return true;
+    }
+
+    public static function force_secure_logged_in_cookie(bool $secure_logged_in_cookie, int $user_id, bool $secure): bool
+    {
+        return true;
+    }
+
+    public static function send_hardened_auth_cookies(bool $send, int $expire, int $expiration, int $user_id, string $scheme, string $token): bool
+    {
+        if (!$send || headers_sent()) {
+            return $send;
+        }
+
+        if ($user_id <= 0) {
+            self::clear_hardened_auth_cookies();
+            return false;
+        }
+
+        if ($token === '') {
+            return $send;
+        }
+
+        $scheme = $scheme === 'secure_auth' ? 'secure_auth' : 'auth';
+        $auth_cookie_name = $scheme === 'secure_auth' ? SECURE_AUTH_COOKIE : AUTH_COOKIE;
+        $auth_cookie = wp_generate_auth_cookie($user_id, $expiration, $scheme, $token);
+        $logged_in_cookie = wp_generate_auth_cookie($user_id, $expiration, 'logged_in', $token);
+
+        self::set_hardened_cookie($auth_cookie_name, $auth_cookie, $expire, PLUGINS_COOKIE_PATH, COOKIE_DOMAIN, true);
+        self::set_hardened_cookie($auth_cookie_name, $auth_cookie, $expire, ADMIN_COOKIE_PATH, COOKIE_DOMAIN, true);
+        self::set_hardened_cookie(LOGGED_IN_COOKIE, $logged_in_cookie, $expire, COOKIEPATH, COOKIE_DOMAIN, true);
+        if (COOKIEPATH !== SITECOOKIEPATH) {
+            self::set_hardened_cookie(LOGGED_IN_COOKIE, $logged_in_cookie, $expire, SITECOOKIEPATH, COOKIE_DOMAIN, true);
+        }
+
+        return false;
+    }
+
+    public static function revoke_sessions_after_password_reset(WP_User $user, string $new_pass): void
+    {
+        WP_Session_Tokens::get_instance((int) $user->ID)->destroy_all();
+        wp_clear_auth_cookie();
+        if (get_current_user_id() === (int) $user->ID) {
+            wp_set_current_user(0);
+        }
+
+        self::audit_event(
+            'auth_sessions_revoked_after_password_reset',
+            [
+                'actor_user_id' => (int) $user->ID,
+                'actor_type' => 'user',
+                'entity_type' => 'session',
+                'entity_id' => (int) $user->ID,
+                'event_data' => [
+                    'revocation_reason' => 'password_reset',
+                    'revoked_all_sessions' => true,
+                ],
+            ]
+        );
     }
 
     public static function password_hash_algorithm($algorithm)
@@ -1574,6 +1652,23 @@ final class ABiT_SaaS_Auth_API
         }
 
         $expected_method = $routes[$path]['method'];
+        $security_error = self::enforce_pretty_request_security($path, $expected_method);
+        if ($security_error instanceof WP_Error) {
+            $error_data = $security_error->get_error_data();
+            wp_send_json(
+                [
+                    'message' => $security_error->get_error_message(),
+                    'code' => $security_error->get_error_code(),
+                ],
+                is_array($error_data) ? (int) ($error_data['status'] ?? 403) : 403
+            );
+        }
+
+        if ('OPTIONS' === strtoupper($_SERVER['REQUEST_METHOD'] ?? '')) {
+            status_header(204);
+            exit;
+        }
+
         if (strtoupper($_SERVER['REQUEST_METHOD'] ?? '') !== $expected_method) {
             header('Allow: ' . $expected_method);
             wp_send_json(
@@ -1593,6 +1688,58 @@ final class ABiT_SaaS_Auth_API
 
         $response = rest_ensure_response(call_user_func($routes[$path]['callback'], $request));
         wp_send_json($response->get_data(), $response->get_status());
+    }
+
+    public static function enforce_rest_request_security($result, WP_REST_Server $server, WP_REST_Request $request)
+    {
+        if (!self::is_abit_rest_request($request)) {
+            return $result;
+        }
+
+        if (!empty($result)) {
+            return $result;
+        }
+
+        $origin_error = self::origin_security_error();
+        if ($origin_error instanceof WP_Error) {
+            return $origin_error;
+        }
+
+        if (self::requires_csrf_nonce($request->get_route(), $request->get_method()) && !self::valid_rest_nonce_from_request($request)) {
+            self::audit_event(
+                'auth_csrf_rejected',
+                [
+                    'actor_user_id' => self::current_authenticated_user_id() ?: null,
+                    'actor_type' => self::current_authenticated_user_id() > 0 ? 'user' : 'anonymous',
+                    'entity_type' => 'auth',
+                    'event_data' => [
+                        'api_surface' => $request->get_route(),
+                        'request_method' => strtoupper($request->get_method()),
+                        'origin_hash' => self::nullable_hash(get_http_origin() ?: null),
+                    ],
+                ]
+            );
+
+            return new WP_Error(
+                'csrf_check_failed',
+                'Request security check failed. Refresh the page and try again.',
+                ['status' => 403]
+            );
+        }
+
+        return $result;
+    }
+
+    public static function send_restricted_cors_headers($served, WP_REST_Response $result, WP_REST_Request $request, WP_REST_Server $server)
+    {
+        if (!self::is_abit_rest_request($request)) {
+            return $served;
+        }
+
+        remove_filter('rest_pre_serve_request', 'rest_send_cors_headers');
+        self::send_api_cors_headers();
+
+        return $served;
     }
 
     public static function maybe_install_schema(): void
@@ -2793,6 +2940,161 @@ final class ABiT_SaaS_Auth_API
             'Admin review access is required.',
             ['status' => 403]
         );
+    }
+
+    private static function set_hardened_cookie(string $name, string $value, int $expires, string $path, string $domain, bool $secure): void
+    {
+        $options = [
+            'expires' => $expires,
+            'path' => $path,
+            'domain' => $domain,
+            'secure' => $secure,
+            'httponly' => true,
+            'samesite' => self::AUTH_COOKIE_SAMESITE,
+        ];
+
+        if ($domain === '') {
+            unset($options['domain']);
+        }
+
+        setcookie($name, $value, $options);
+    }
+
+    private static function clear_hardened_auth_cookies(): void
+    {
+        $expires = time() - YEAR_IN_SECONDS;
+        foreach ([ADMIN_COOKIE_PATH, PLUGINS_COOKIE_PATH, COOKIEPATH, SITECOOKIEPATH] as $path) {
+            self::set_hardened_cookie(AUTH_COOKIE, ' ', $expires, $path, COOKIE_DOMAIN, true);
+            self::set_hardened_cookie(SECURE_AUTH_COOKIE, ' ', $expires, $path, COOKIE_DOMAIN, true);
+            self::set_hardened_cookie(LOGGED_IN_COOKIE, ' ', $expires, $path, COOKIE_DOMAIN, true);
+        }
+
+        self::set_hardened_cookie(USER_COOKIE, ' ', $expires, COOKIEPATH, COOKIE_DOMAIN, true);
+        self::set_hardened_cookie(PASS_COOKIE, ' ', $expires, COOKIEPATH, COOKIE_DOMAIN, true);
+        self::set_hardened_cookie(USER_COOKIE, ' ', $expires, SITECOOKIEPATH, COOKIE_DOMAIN, true);
+        self::set_hardened_cookie(PASS_COOKIE, ' ', $expires, SITECOOKIEPATH, COOKIE_DOMAIN, true);
+        self::set_hardened_cookie('wp-postpass_' . COOKIEHASH, ' ', $expires, COOKIEPATH, COOKIE_DOMAIN, true);
+    }
+
+    private static function enforce_pretty_request_security(string $path, string $expected_method): ?WP_Error
+    {
+        $origin_error = self::origin_security_error();
+        if ($origin_error instanceof WP_Error) {
+            return $origin_error;
+        }
+
+        self::send_api_cors_headers($expected_method);
+
+        if (self::requires_csrf_nonce('/' . self::REST_NAMESPACE . substr($path, 4), (string) ($_SERVER['REQUEST_METHOD'] ?? '')) && !self::valid_rest_nonce_from_globals()) {
+            self::audit_event(
+                'auth_csrf_rejected',
+                [
+                    'actor_user_id' => self::current_authenticated_user_id() ?: null,
+                    'actor_type' => self::current_authenticated_user_id() > 0 ? 'user' : 'anonymous',
+                    'entity_type' => 'auth',
+                    'event_data' => [
+                        'api_surface' => $path,
+                        'request_method' => strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? '')),
+                        'origin_hash' => self::nullable_hash(get_http_origin() ?: null),
+                    ],
+                ]
+            );
+
+            return new WP_Error(
+                'csrf_check_failed',
+                'Request security check failed. Refresh the page and try again.',
+                ['status' => 403]
+            );
+        }
+
+        return null;
+    }
+
+    private static function origin_security_error(): ?WP_Error
+    {
+        $origin = get_http_origin();
+        if (!$origin || is_allowed_http_origin($origin)) {
+            return null;
+        }
+
+        self::audit_event(
+            'auth_cors_rejected',
+            [
+                'actor_user_id' => self::current_authenticated_user_id() ?: null,
+                'actor_type' => self::current_authenticated_user_id() > 0 ? 'user' : 'anonymous',
+                'entity_type' => 'auth',
+                'event_data' => [
+                    'origin_hash' => self::hmac($origin),
+                    'request_method' => strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? '')),
+                ],
+            ]
+        );
+
+        return new WP_Error(
+            'cors_origin_denied',
+            'Cross-origin requests are not allowed for this authentication API.',
+            ['status' => 403]
+        );
+    }
+
+    private static function send_api_cors_headers(string $method = ''): void
+    {
+        $origin = get_http_origin();
+        if ($origin && is_allowed_http_origin($origin)) {
+            header('Access-Control-Allow-Origin: ' . sanitize_url($origin));
+            header('Access-Control-Allow-Credentials: true');
+            header('Access-Control-Allow-Methods: ' . ($method !== '' ? 'OPTIONS, ' . strtoupper($method) : 'OPTIONS, GET, POST'));
+            header('Access-Control-Allow-Headers: Content-Type, Accept, X-WP-Nonce');
+            header('Vary: Origin', false);
+            return;
+        }
+
+        if (!headers_sent()) {
+            header('Vary: Origin', false);
+        }
+    }
+
+    private static function is_abit_rest_request(WP_REST_Request $request): bool
+    {
+        return strpos($request->get_route(), '/' . self::REST_NAMESPACE . '/') === 0;
+    }
+
+    private static function requires_csrf_nonce(string $route, string $method): bool
+    {
+        $method = strtoupper($method);
+        if (!in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+            return false;
+        }
+
+        return in_array(
+            $route,
+            [
+                '/' . self::REST_NAMESPACE . '/auth/logout',
+                '/' . self::REST_NAMESPACE . '/provisioning/request',
+                '/' . self::REST_NAMESPACE . '/workspace/slug/validate',
+            ],
+            true
+        ) || preg_match('#^/' . preg_quote(self::REST_NAMESPACE, '#') . '/admin/#', $route) === 1;
+    }
+
+    private static function valid_rest_nonce_from_request(WP_REST_Request $request): bool
+    {
+        $nonce = (string) $request->get_header('x_wp_nonce');
+        if ($nonce === '') {
+            $nonce = (string) $request->get_param('_wpnonce');
+        }
+
+        return $nonce !== '' && (bool) wp_verify_nonce($nonce, 'wp_rest');
+    }
+
+    private static function valid_rest_nonce_from_globals(): bool
+    {
+        $nonce = isset($_SERVER['HTTP_X_WP_NONCE']) ? (string) wp_unslash($_SERVER['HTTP_X_WP_NONCE']) : '';
+        if ($nonce === '' && isset($_REQUEST['_wpnonce'])) {
+            $nonce = (string) wp_unslash($_REQUEST['_wpnonce']);
+        }
+
+        return $nonce !== '' && (bool) wp_verify_nonce($nonce, 'wp_rest');
     }
 
     private static function tenant_scope_denial_response(WP_REST_Request $request, WP_User $user, ?array $access_request, string $surface): ?WP_REST_Response

@@ -29,6 +29,9 @@ Session handling:
 - `POST /api/auth/login` creates a WordPress auth cookie session.
 - Authenticated requests must include browser credentials, for example `fetch(url, { credentials: "include" })`.
 - Successful login also returns `nonce`; pass it as `X-WP-Nonce` for WordPress REST requests when the client calls `/wp-json/abit-ai/v1/*` directly.
+- Unsafe authenticated requests, including logout, provisioning, workspace slug validation, and admin decision endpoints, must include the current `X-WP-Nonce` value. Missing or invalid nonces return `403` with `code: "csrf_check_failed"`.
+- Cross-origin browser requests are limited to the WordPress allowed-origin list. Disallowed origins return `403` with `code: "cors_origin_denied"` and receive no credentialed CORS grant.
+- Auth cookies are issued with bounded lifetimes, `Secure`, `HttpOnly`, and `SameSite=Lax`; password reset revokes all existing sessions for that user.
 
 ## Endpoint Summary
 
