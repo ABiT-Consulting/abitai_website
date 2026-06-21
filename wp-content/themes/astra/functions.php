@@ -1902,7 +1902,7 @@ if ( ! function_exists( 'abitai_handle_mock_password_reset_submit' ) ) {
 			exit;
 		}
 
-		if ( '' === $token || 'used-reset-token' === $token || 'invalid-reset-token' === $token || 'invalid' === $token ) {
+		if ( '' === $token || in_array( $token, array( 'used-reset-token', 'reused-reset-token', 'consumed-reset-token', 'already-used-reset-token', 'invalid-reset-token', 'invalid' ), true ) ) {
 			if ( function_exists( 'abitai_auth_write_audit_log' ) ) {
 				abitai_auth_write_audit_log(
 					'auth_password_reset_completed',
