@@ -5,6 +5,7 @@ deployment:
     - if [ -f "${HOME}/public_html/abit.ai/wp-config.php" ]; then export DEPLOYPATH="${HOME}/public_html/abit.ai/"; fi
     - if [ -f "${HOME}/abit.ai/wp-config.php" ]; then export DEPLOYPATH="${HOME}/abit.ai/"; fi
     - /bin/mkdir -p "$DEPLOYPATH"
+    - /bin/cp -f index.php "$DEPLOYPATH/index.php"
     - if [ -d "dist" ]; then /bin/cp -R dist/. "$DEPLOYPATH"; fi
     - /bin/mkdir -p "$DEPLOYPATH/wp-content/themes/astra"
     - /bin/cp -f wp-content/themes/astra/functions.php "$DEPLOYPATH/wp-content/themes/astra/functions.php"
