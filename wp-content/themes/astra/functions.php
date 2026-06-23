@@ -244,9 +244,16 @@ if ( ! function_exists( 'abitai_operator_render_section' ) ) {
 										<div class="abitai-operator-app__bubble abitai-operator-app__bubble--assistant">I found the customer, items, quantities, and delivery date. Draft order is ready for review.</div>
 									</div>
 									<div class="abitai-operator-app__composer">
-										<button type="button" class="abitai-operator-app__attach" aria-label="Attach image">
+										<button type="button" class="abitai-operator-app__attach" aria-label="Attach image" data-operator-image-trigger>
 											<span aria-hidden="true"></span>
 										</button>
+										<input
+											type="file"
+											class="abitai-operator-app__attachment-input"
+											accept="image/*"
+											aria-label="Choose an image to attach"
+											data-operator-image-input
+										/>
 										<span class="abitai-operator-app__placeholder">Ask in chat or attach an image</span>
 										<button type="button" class="abitai-operator-app__send" aria-label="Send message">Send</button>
 									</div>
@@ -640,6 +647,53 @@ if ( ! function_exists( 'abitai_operator_video_modal_script' ) ) {
 		<?php
 	}
 	add_action( 'wp_footer', 'abitai_operator_video_modal_script', 105 );
+}
+
+if ( ! function_exists( 'abitai_operator_image_attachment_script' ) ) {
+	function abitai_operator_image_attachment_script() {
+		?>
+		<script>
+			(function () {
+				var operatorSection = document.querySelector('.abitai-operator-section');
+				if (!operatorSection) {
+					return;
+				}
+
+				var composer = operatorSection.querySelector('.abitai-operator-app__composer');
+				var attachButton = operatorSection.querySelector('[data-operator-image-trigger]');
+				var attachInput = operatorSection.querySelector('[data-operator-image-input]');
+				var placeholder = operatorSection.querySelector('.abitai-operator-app__placeholder');
+
+				if (!composer || !attachButton || !attachInput || !placeholder) {
+					return;
+				}
+
+				var defaultPlaceholder = (placeholder.textContent || '').trim();
+
+				attachButton.addEventListener('click', function () {
+					attachInput.click();
+				});
+
+				attachInput.addEventListener('change', function () {
+					var file = attachInput.files && attachInput.files[0] ? attachInput.files[0] : null;
+					if (!file) {
+						placeholder.textContent = defaultPlaceholder;
+						return;
+					}
+
+					if ('image/' !== file.type.substring(0, 6)) {
+						attachInput.value = '';
+						placeholder.textContent = 'Attach an image file (PNG, JPG, or WEBP)';
+						return;
+					}
+
+					placeholder.textContent = 'Attached: ' + file.name;
+				});
+			})();
+		</script>
+		<?php
+	}
+	add_action( 'wp_footer', 'abitai_operator_image_attachment_script', 110 );
 }
 
 if ( ! function_exists( 'abitai_whatsapp_button' ) ) {
