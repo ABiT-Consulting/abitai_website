@@ -539,6 +539,7 @@ body.aierp-front-page * {
 }
 
 .abitai-operator-app__composer {
+	position: relative;
 	display: flex;
 	gap: 10px;
 	align-items: center;
@@ -560,6 +561,14 @@ body.aierp-front-page * {
 	background: #f2f7fd;
 	border: 1px solid #d5e8fb;
 	border-radius: 8px;
+	box-shadow: none;
+	cursor: pointer;
+}
+
+.abitai-operator-app__attach:hover,
+.abitai-operator-app__attach:focus {
+	background: #e2effc;
+	border-color: #a8c8f0;
 	box-shadow: none;
 }
 
