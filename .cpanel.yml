@@ -4,12 +4,33 @@ deployment:
     - export DEPLOYPATH="${HOME}/public_html/"
     - if [ -f "${HOME}/public_html/abit.ai/wp-config.php" ]; then export DEPLOYPATH="${HOME}/public_html/abit.ai/"; fi
     - if [ -f "${HOME}/abit.ai/wp-config.php" ]; then export DEPLOYPATH="${HOME}/abit.ai/"; fi
+    - /usr/bin/test -s index.php
+    - /usr/bin/test -s wp-content/themes/astra/functions.php
+    - /usr/bin/test -s wp-content/themes/astra/front-page.php
+    - /usr/bin/test -s wp-content/themes/astra/inc/abitai-auth-schema.php
+    - /usr/bin/test -s wp-content/themes/astra/inc/abitai-erp-access-gate.php
+    - /usr/bin/test -s wp-content/themes/astra/inc/abitai-auth-routes.php
+    - /usr/bin/test -s wp-content/themes/astra/inc/abitai-auth-resend-verification-api.php
+    - /usr/bin/test -s wp-content/themes/astra/inc/abitai-auth-password-reset.php
+    - /usr/bin/test -s wp-content/themes/astra/inc/abitai-company-profile-api.php
+    - /usr/bin/test -s wp-content/themes/astra/template-auth.php
+    - /usr/bin/test -s wp-content/themes/astra/assets/js/abitai-auth.js
+    - /usr/bin/test -s wp-content/themes/astra/assets/css/abitai-frontend.css
     - /bin/mkdir -p "$DEPLOYPATH"
     - /bin/cp -f index.php "$DEPLOYPATH/index.php"
     - if [ -d "dist" ]; then /bin/cp -R dist/. "$DEPLOYPATH"; fi
-    - /bin/mkdir -p "$DEPLOYPATH/wp-content/themes/astra"
-    - /bin/cp -f wp-content/themes/astra/functions.php "$DEPLOYPATH/wp-content/themes/astra/functions.php"
-    - /bin/cp -f wp-content/themes/astra/front-page.php "$DEPLOYPATH/wp-content/themes/astra/front-page.php"
+    - /bin/mkdir -p "$DEPLOYPATH/wp-content/themes/astra/inc"
+    - /bin/mkdir -p "$DEPLOYPATH/wp-content/themes/astra/assets/js"
     - /bin/mkdir -p "$DEPLOYPATH/wp-content/themes/astra/assets/css"
+    - /bin/cp -f wp-content/themes/astra/inc/abitai-auth-schema.php "$DEPLOYPATH/wp-content/themes/astra/inc/abitai-auth-schema.php"
+    - /bin/cp -f wp-content/themes/astra/inc/abitai-erp-access-gate.php "$DEPLOYPATH/wp-content/themes/astra/inc/abitai-erp-access-gate.php"
+    - /bin/cp -f wp-content/themes/astra/inc/abitai-auth-routes.php "$DEPLOYPATH/wp-content/themes/astra/inc/abitai-auth-routes.php"
+    - /bin/cp -f wp-content/themes/astra/inc/abitai-auth-resend-verification-api.php "$DEPLOYPATH/wp-content/themes/astra/inc/abitai-auth-resend-verification-api.php"
+    - /bin/cp -f wp-content/themes/astra/inc/abitai-auth-password-reset.php "$DEPLOYPATH/wp-content/themes/astra/inc/abitai-auth-password-reset.php"
+    - /bin/cp -f wp-content/themes/astra/inc/abitai-company-profile-api.php "$DEPLOYPATH/wp-content/themes/astra/inc/abitai-company-profile-api.php"
+    - /bin/cp -f wp-content/themes/astra/template-auth.php "$DEPLOYPATH/wp-content/themes/astra/template-auth.php"
+    - /bin/cp -f wp-content/themes/astra/assets/js/abitai-auth.js "$DEPLOYPATH/wp-content/themes/astra/assets/js/abitai-auth.js"
     - /bin/cp -f wp-content/themes/astra/assets/css/abitai-frontend.css "$DEPLOYPATH/wp-content/themes/astra/assets/css/abitai-frontend.css"
+    - /bin/cp -f wp-content/themes/astra/front-page.php "$DEPLOYPATH/wp-content/themes/astra/front-page.php"
+    - /bin/cp -f wp-content/themes/astra/functions.php "$DEPLOYPATH/wp-content/themes/astra/functions.php"
     - if [ -f "web.config" ]; then /bin/cp -f web.config "$DEPLOYPATH/web.config"; fi
